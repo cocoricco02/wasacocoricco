@@ -1,10 +1,10 @@
-FROM node:20-slim
+FROM node:20
 
 WORKDIR /app
 
-COPY package*.json ./
+COPY package.json ./
 
-RUN npm install --omit=dev --legacy-peer-deps
+RUN npm install
 
 COPY . .
 
