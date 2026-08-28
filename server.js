@@ -216,22 +216,72 @@ async function connectToWhatsApp() {
 
       const cleanText = text.trim().toLowerCase();
 
-      // 1. Menú Dinámico con Stock
+      // 1. Catálogo / Carta / Fotos / Productos
       if (
-        cleanText === 'hola' ||
-        cleanText === 'buenas' ||
-        cleanText === 'menu' ||
-        cleanText === 'carta' ||
-        cleanText === 'precios' ||
-        cleanText === '1' ||
-        cleanText.includes('stock')
+        cleanText.includes('catalogo') ||
+        cleanText.includes('carta') ||
+        cleanText.includes('foto') ||
+        cleanText.includes('producto') ||
+        cleanText.includes('web') ||
+        cleanText.includes('link') ||
+        cleanText.includes('pagina')
       ) {
-        await syncProductsFromGoogleSheets();
-        const reply = buildDynamicMenu();
+        const reply =
+`🍨 *CARTA VIRTUAL OFICIAL COCO RICCO* 🍓
+_Mira fotos en alta definición, tamaños y precios aquí:_
+
+👉 *https://carta-cocoricco.vercel.app*
+
+¿Te gustaría que te preparemos algún vasito de fresas con crema, helado en tazón de coco o paletas artesanales? 😊`;
+
         await sock.sendMessage(from, { text: reply });
       }
 
-      // 2. Pagos
+      // 2. Consulta de Delivery
+      else if (cleanText.includes('delivery') || cleanText.includes('envio') || cleanText.includes('domicilio')) {
+        const reply =
+`🛵 *DELIVERY COCO RICCO — JAÉN* 🍓
+
+¡Hola! Sí, contamos con servicio de delivery rápido a toda la ciudad de Jaén (tiempo estimado de 20 a 35 minutos).
+
+Puedes ver nuestra carta con fotos y precios aquí:
+👉 *https://carta-cocoricco.vercel.app*
+
+¿Qué te gustaría pedir para hoy? 😊`;
+
+        await sock.sendMessage(from, { text: reply });
+      }
+
+      // 3. Saludos Naturales
+      else if (
+        cleanText === 'hola' ||
+        cleanText === 'buenas' ||
+        cleanText === 'buenos dias' ||
+        cleanText === 'buenas tardes' ||
+        cleanText === 'buenas noches' ||
+        cleanText === '1'
+      ) {
+        const reply =
+`¡Hola! 👋🍓 Bienvenido a *Coco Ricco* (Heladería Artesanal & Fresas con Crema).
+
+¿En qué te podemos consentir hoy?
+• Ver fotos y productos: 👉 *https://carta-cocoricco.vercel.app*
+• Escribe *MENU* para ver la lista de precios y stock del día.
+• Escribe *PAGO* o *UBICACION* para más información.
+
+¡Estamos atentos a tu pedido! 😊🥥`;
+
+        await sock.sendMessage(from, { text: reply });
+      }
+
+      // 4. Menú de Precios & Stock en Vivo
+      else if (cleanText === 'menu' || cleanText === 'precios' || cleanText.includes('stock')) {
+        await syncProductsFromGoogleSheets();
+        const reply = buildDynamicMenu() + `\n\n📸 *Ver Fotos en Alta Definición:* https://carta-cocoricco.vercel.app`;
+        await sock.sendMessage(from, { text: reply });
+      }
+
+      // 5. Pagos
       else if (cleanText.includes('yape') || cleanText.includes('pago') || cleanText.includes('plin') || cleanText === '2') {
         const reply =
 `💳 *MÉTODOS DE PAGO COCO RICCO:*
@@ -245,19 +295,21 @@ async function connectToWhatsApp() {
         await sock.sendMessage(from, { text: reply });
       }
 
-      // 3. Ubicación
+      // 6. Ubicación & Horario
       else if (cleanText.includes('donde') || cleanText.includes('ubicacion') || cleanText.includes('direccion') || cleanText.includes('horario') || cleanText === '3') {
         const reply =
 `📍 *UBICACIÓN Y ATENCIÓN COCO RICCO:*
 
 🏠 *Local:* Jaén, Cajamarca, Perú.
 ⏰ *Horario:* Lunes a Domingo de 11:00 AM a 10:00 PM.
-🛵 *Delivery:* Cobertura rápida en toda la ciudad de Jaén.`;
+🛵 *Delivery:* Cobertura rápida en toda la ciudad de Jaén.
+
+🌐 Carta Virtual: https://carta-cocoricco.vercel.app`;
 
         await sock.sendMessage(from, { text: reply });
       }
 
-      // 4. Recepción de Pedido con Verificación de Stock
+      // 7. Recepción de Pedido con Verificación de Stock
       else if (cleanText.includes('pedido') || cleanText.includes('vaso') || cleanText.includes('fresas') || cleanText.includes('helado') || cleanText.includes('paleta')) {
         const orderId = `PED-${Date.now().toString().slice(-4)}`;
         const newOrder = {
@@ -275,7 +327,7 @@ async function connectToWhatsApp() {
         const reply =
 `✅ *¡REGISTRAMOS TU PEDIDO #${orderId}!*
 
-Tu pedido fue guardado y descontado del stock en tiempo real. 🍓🥥
+Tu pedido fue guardado y validado con el stock en tiempo real. 🍓🥥
 Un asesor de *Coco Ricco* lo revisará para prepararlo de inmediato.
 
 Si tienes alguna indicación especial sobre toppings (Oreo, Brownie, M&M, Fudge) o paletas *con/sin leche Nestlé*, indícanoslo por aquí.`;
