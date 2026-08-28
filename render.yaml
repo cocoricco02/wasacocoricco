@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: cocoricco-whatsapp-bot
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: PORT
+        value: 3005
+      - key: NODE_ENV
+        value: production
+    disk:
+      name: auth-data
+      mountPath: /app/auth_info_baileys
+      sizeGB: 1

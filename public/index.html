@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Coco Ricco — Conexión WhatsApp 24/7</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: 'Plus Jakarta Sans', sans-serif; }
+    @keyframes pulseGlow {
+      0%, 100% { opacity: 0.4; }
+      50% { opacity: 0.8; }
+    }
+    .glow { animation: pulseGlow 4s ease-in-out infinite; }
+  </style>
+</head>
+<body class="bg-[#0b130f] text-slate-100 min-h-screen flex flex-col justify-between selection:bg-rose-500 selection:text-white">
+
+  <!-- Background glows -->
+  <div class="fixed inset-0 pointer-events-none overflow-hidden">
+    <div class="absolute -top-32 -left-32 w-96 h-96 bg-lime-500/15 rounded-full blur-[140px] glow"></div>
+    <div class="absolute -bottom-32 -right-32 w-96 h-96 bg-rose-500/15 rounded-full blur-[140px] glow"></div>
+  </div>
+
+  <!-- Header -->
+  <header class="relative z-10 border-b border-white/10 px-6 py-4 backdrop-blur-md bg-black/40">
+    <div class="max-w-4xl mx-auto flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-lime-500/20 border border-lime-400/40 flex items-center justify-center text-xl">
+          🍓
+        </div>
+        <div>
+          <h1 class="text-lg font-black tracking-tight bg-gradient-to-r from-lime-400 via-white to-rose-400 bg-clip-text text-transparent">
+            COCO RICCO BOT 24/7
+          </h1>
+          <p class="text-[11px] text-slate-400">Servidor en la Nube de WhatsApp Automatizado</p>
+        </div>
+      </div>
+
+      <div id="statusBadge" class="px-3 py-1 rounded-full text-xs font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-2">
+        <span class="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
+        <span id="badgeText">Iniciando...</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main QR Screen -->
+  <main class="relative z-10 max-w-lg mx-auto px-4 py-8 w-full">
+    <div class="rounded-3xl bg-slate-900/80 border border-white/15 p-6 sm:p-8 shadow-2xl backdrop-blur-xl text-center space-y-6">
+      
+      <div>
+        <h2 class="text-2xl font-black text-white">Vincular WhatsApp</h2>
+        <p class="text-xs text-slate-400 mt-1">
+          Escanea el código QR desde tu celular para mantener el bot activo 24/7 sin necesidad de tener tu PC encendida.
+        </p>
+      </div>
+
+      <!-- QR Container -->
+      <div class="relative w-64 h-64 mx-auto rounded-2xl bg-white p-3 shadow-[0_0_30px_rgba(132,204,22,0.2)] border-2 border-lime-400 flex items-center justify-center overflow-hidden">
+        
+        <img id="qrImage" src="" alt="Código QR WhatsApp" class="w-full h-full object-contain hidden" />
+
+        <div id="loadingQr" class="flex flex-col items-center gap-3 text-slate-800">
+          <div class="w-8 h-8 border-4 border-lime-500 border-t-transparent rounded-full animate-spin"></div>
+          <span class="text-xs font-bold text-slate-600">Generando Código QR...</span>
+        </div>
+
+        <div id="connectedOverlay" class="hidden flex flex-col items-center justify-center p-4 bg-emerald-950/90 text-white w-full h-full text-center space-y-2">
+          <span class="text-4xl">✅</span>
+          <p class="text-sm font-black text-lime-400">¡Conexión Exitosa!</p>
+          <p id="connectedPhoneText" class="text-xs text-slate-300 font-semibold"></p>
+        </div>
+
+      </div>
+
+      <!-- Instructions List -->
+      <div class="text-left space-y-2 bg-white/5 border border-white/5 p-4 rounded-2xl text-xs text-slate-300">
+        <p class="font-bold text-lime-400 uppercase tracking-wider text-[11px]">Pasos para escanear:</p>
+        <ol class="list-decimal list-inside space-y-1 text-slate-400">
+          <li>Abre WhatsApp en tu teléfono celular.</li>
+          <li>Toca los tres puntos (Android) o <strong>Configuración</strong> (iPhone).</li>
+          <li>Toca <strong>Dispositivos vinculados</strong> y luego <strong>Vincular un dispositivo</strong>.</li>
+          <li>Apunta tu cámara a este código QR.</li>
+        </ol>
+      </div>
+
+    </div>
+  </main>
+
+  <!-- Footer -->
+  <footer class="relative z-10 border-t border-white/10 py-4 px-6 text-center text-xs text-slate-500">
+    Coco Ricco Heladería & Fresas con Crema • Sistema de Automatización 24/7
+  </footer>
+
+  <script>
+    async function pollStatus() {
+      try {
+        const res = await fetch('/api/status');
+        const data = await res.json();
+
+        const badge = document.getElementById('statusBadge');
+        const badgeText = document.getElementById('badgeText');
+        const qrImage = document.getElementById('qrImage');
+        const loadingQr = document.getElementById('loadingQr');
+        const connectedOverlay = document.getElementById('connectedOverlay');
+        const connectedPhoneText = document.getElementById('connectedPhoneText');
+
+        if (data.isReady) {
+          badge.className = 'px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-2';
+          badgeText.innerText = '● Conectado 24/7';
+          
+          qrImage.classList.add('hidden');
+          loadingQr.classList.add('hidden');
+          connectedOverlay.classList.remove('hidden');
+          connectedPhoneText.innerText = 'WhatsApp Oficial: +' + data.connectedNumber;
+        } else if (data.qrCode) {
+          badge.className = 'px-3 py-1 rounded-full text-xs font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-2';
+          badgeText.innerText = 'Esperando Escaneo QR';
+
+          qrImage.src = data.qrCode;
+          qrImage.classList.remove('hidden');
+          loadingQr.classList.add('hidden');
+          connectedOverlay.classList.add('hidden');
+        } else {
+          badgeText.innerText = 'Generando QR...';
+        }
+      } catch (e) {
+        console.error('Error polling status:', e);
+      }
+    }
+
+    setInterval(pollStatus, 2500);
+    pollStatus();
+  </script>
+</body>
+</html>
