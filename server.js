@@ -107,48 +107,33 @@ function isProductAvailable(p) {
 }
 
 // -------------------------------------------------------------
-// MOTOR IA GENERATIVA REAL (GROQ COMPOUND / LLAMA 3.3)
+// MOTOR IA GENERATIVA PERSUASIVA (BREVE, DIRECTA Y VENTAS RÁPIDAS)
 // -------------------------------------------------------------
 function buildSystemPrompt() {
-  const stockSummary = cachedProducts.map(p => {
-    const stock = getProductStock(p);
-    const avail = isProductAvailable(p);
-    return `• ${p.Nombre_Producto} (${p.Medida_Detalle}): S/. ${p.Precio_Soles} | Stock disponible: ${avail ? stock + ' unidades' : 'AGOTADO'}`;
-  }).join('\n');
+  const stockSummary = cachedProducts
+    .filter(p => !(p.Nombre_Producto || '').toLowerCase().includes('copa'))
+    .map(p => {
+      const stock = getProductStock(p);
+      const avail = isProductAvailable(p);
+      return `• ${p.Nombre_Producto} (${p.Medida_Detalle}): S/. ${p.Precio_Soles} | Stock: ${avail ? stock + ' disponibles' : 'AGOTADO'}`;
+    }).join('\n');
 
-  return `Eres el Asesor Virtual Oficial de 'Coco Ricco' (Heladería Artesanal & Fresas con Crema) en Jaén, Cajamarca, Perú.
+  return `Eres el Asesor Estrella de Ventas de "Coco Ricco" (Fresas con Crema & Helados Artesanales) en Jaén, Perú.
 
-TU FORMA DE HABLAR Y PERSONALIDAD:
-- Eres 100% humano, alegre, cálido, empático, conversacional y atento (como una persona real que atiende por WhatsApp con amabilidad peruana).
-- Usa emojis con gusto y naturalidad (🍓, 🥥, 🍦, 😊, 🛵, ✨).
-- Responde de forma concisa y amigable a lo que el cliente te pregunte o converse contigo. NUNCA respondas con menús robóticos rígidos si solo te están saludando o preguntando tu opinión.
-- Si te preguntan si los precios son caros, explica con calidez que son precios súper justos y accesibles (vasitos desde S/ 5.00) preparados con fresas frescas del día y crema artesanal de la mejor calidad.
+DIRECTIVAS CRÍTICAS DE COMUNICACIÓN (VENTAS RÁPIDAS):
+1. RESPUESTAS BREVES Y PRECISAS: Responde en MÁXIMO 2 a 3 líneas cortas y atractivas. Sé directo, sin rodeos ni textos largos.
+2. ALTAMENTE PERSUASIVO: Tu objetivo es cerrar la venta lo antes posible con energía alegre y antojable.
+3. RECOMIENDA EL CATÁLOGO DESDE EL INICIO: En saludos o consultas iniciales, envía de inmediato el enlace con fotos: 👉 ${VERCEL_CATALOG_URL}
+4. PRECIOS Y PRODUCTOS DISPONIBLES:
+   - Vasitos de Fresas con Crema artesanal y toppings: 5oz (S/5), 8oz (S/8 ⭐ el más pedido), 10oz (S/10), 12oz Mega (S/12).
+   - Helado en Tazón de Coco Natural: S/. 12.00 (servido en cáscara real de coco 🥥).
+   - Paletas Artesanales: S/. 6.00 (Coco, Lúcuma, Arándano, Oreo, Mango — Con Leche Nestlé adentro o Pura Fruta sin lácteos).
+   *(NOTA: NO vendemos helado en copa de 2 bolas, solo tazón de coco y paletas).*
+5. CIERRE DE VENTA DIRECTO: Invita a pedir con preguntas de cierre: "¿A qué dirección en Jaén te lo enviamos hoy?" o "¿Cuál se te antoja que te preparemos?".
+6. DATOS DE PAGO: Yape/Plin al 938 955 940 (Coco Ricco) o Efectivo contra entrega. Delivery rápido en Jaén (20 a 30 min).
 
-INFORMACIÓN DEL NEGOCIO (COCO RICCO):
-- Ubicación: Jaén, Cajamarca, Perú.
-- Horario de Atención: Lunes a Domingo de 11:00 AM a 10:00 PM.
-- Delivery: Cobertura rápida a toda la ciudad de Jaén (20 a 30 min aprox).
-- Carta Virtual Oficial con fotos en alta definición: ${VERCEL_CATALOG_URL}
-- Métodos de Pago: Yape o Plin al número oficial 938 955 940 (a nombre de Coco Ricco), o Efectivo contra entrega en Jaén.
-
-NUESTROS PRODUCTOS Y PRECIOS:
-1. Fresas con Crema Artesanales (con crema de la casa, fudge, chantilly y toppings como Oreo, Brownie, M&M):
-   - Vaso 5 oz: S/. 5.00
-   - Vaso 8 oz: S/. 8.00 (El más pedido)
-   - Vaso 10 oz: S/. 10.00
-   - Vaso 12 oz Mega: S/. 12.00
-   - Vaso Especial Oreo & M&M (12 oz): S/. 12.00
-2. Helados en Tazón de Coco Natural: S/. 12.00 (servidos en cáscara real de coco con jalea de maracuyá o natural).
-3. Helado Artesanal en Copa 2 Bolas: S/. 8.00 (100% pura fruta natural).
-4. Paletas Artesanales: S/. 6.00 (Sabores: Coco, Lúcuma, Arándano, Oreo, Fudge de Chocolate y Mango Tropical).
-   - Opción 1: Rellenas CON Leche Nestlé adentro (leche condensada cremosa).
-   - Opción 2: SIN Leche (100% pura fruta natural fresca, ideal si no consumen lácteos).
-
-STOCK EN GOOGLE SHEETS EN VIVO:
-${stockSummary || 'Stock disponible en todas las presentaciones'}
-
-ATENCIÓN Y TOMA DE PEDIDOS:
-- Si el cliente desea pedir, indícale amablemente que te dé su dirección en Jaén y su método de pago (Yape/Plin o Efectivo) para prepararlo de inmediato.`;
+STOCK ACTUAL:
+${stockSummary || 'Stock disponible en fresas, tazones de coco y paletas'}`;
 }
 
 async function callGroqAi(prompt, userHistory) {
@@ -163,8 +148,8 @@ async function callGroqAi(prompt, userHistory) {
   const payload = JSON.stringify({
     model: 'groq/compound-mini',
     messages: messages,
-    temperature: 0.7,
-    max_tokens: 350
+    temperature: 0.65,
+    max_tokens: 180 // Respuestas breves y precisas
   });
 
   return new Promise((resolve) => {
@@ -179,7 +164,7 @@ async function callGroqAi(prompt, userHistory) {
           'Authorization': `Bearer ${GROQ_API_KEY}`,
           'Content-Length': Buffer.byteLength(payload)
         },
-        timeout: 15000
+        timeout: 10000
       },
       (res) => {
         let body = '';
@@ -204,7 +189,7 @@ async function callGroqAi(prompt, userHistory) {
 }
 
 // -------------------------------------------------------------
-// RESPUESTA CONVERSACIONAL
+// RESPUESTA CONVERSACIONAL RÁPIDA
 // -------------------------------------------------------------
 async function getConversationalReply(from, text) {
   const cleanPhone = from.replace(/[^0-9]/g, '');
@@ -215,14 +200,14 @@ async function getConversationalReply(from, text) {
   if (aiReply) {
     conversationHistory[cleanPhone].push({ role: 'user', content: text });
     conversationHistory[cleanPhone].push({ role: 'assistant', content: aiReply });
-    if (conversationHistory[cleanPhone].length > 10) {
-      conversationHistory[cleanPhone] = conversationHistory[cleanPhone].slice(-10);
+    if (conversationHistory[cleanPhone].length > 8) {
+      conversationHistory[cleanPhone] = conversationHistory[cleanPhone].slice(-8);
     }
     return aiReply;
   }
 
-  // Respaldo
-  return `¡Hola! 👋🍓 Qué gusto saludarte. En *Coco Ricco* preparamos las mejores fresas con crema y helados artesanales de Jaén.\n\n• 📸 Mira fotos reales en nuestra Carta: 👉 ${VERCEL_CATALOG_URL}\n• 🛵 Delivery rápido en todo Jaén (11am a 10pm).\n\n¿En qué te podemos consentir hoy? 😊🥥`;
+  // Respaldo Breve y Persuasivo
+  return `¡Hola! 👋🍓 ¡Qué rico tenerte por aquí! Mira todas nuestras fotos y precios al instante en nuestra carta: 👉 ${VERCEL_CATALOG_URL}\n\n¿A qué dirección en Jaén te enviamos tu pedido hoy? 🛵🥥`;
 }
 
 // -------------------------------------------------------------
@@ -236,7 +221,7 @@ async function connectToWhatsApp() {
     version,
     logger: pino({ level: 'silent' }),
     auth: state,
-    browser: ['Coco Ricco AI Bot', 'Chrome', '1.0.0']
+    browser: ['Coco Ricco Sales AI', 'Chrome', '1.0.0']
   });
 
   sock.ev.on('creds.update', saveCreds);
@@ -268,10 +253,10 @@ async function connectToWhatsApp() {
         setTimeout(connectToWhatsApp, 2000);
       }
     } else if (connection === 'open') {
-      connectionStatus = '✓ CONECTADO 24/7 A WHATSAPP (IA GROQ)';
+      connectionStatus = '✓ CONECTADO 24/7 A WHATSAPP';
       qrCodeDataUrl = null;
       connectedNumber = sock.user?.id ? sock.user.id.split(':')[0] : 'Activo';
-      console.log('✓ Bot de Coco Ricco (Cerebro IA Groq) conectado exitosamente!');
+      console.log('✓ Bot de Coco Ricco (IA Ventas Persuasivas) conectado exitosamente!');
     }
   });
 
@@ -309,7 +294,7 @@ async function connectToWhatsApp() {
         }
       }
 
-      // Procesa con IA Generativa Real
+      // Procesa con IA Persuasiva Breve
       const aiReply = await getConversationalReply(from, text);
       if (aiReply) {
         await sock.sendMessage(from, { text: aiReply });
@@ -329,12 +314,7 @@ app.get('/api/status', (req, res) => {
     qrCode: qrCodeDataUrl,
     connectedNumber: connectedNumber,
     isReady: connectionStatus.includes('CONECTADO'),
-    aiEngine: 'Groq Compound (Meta AI / Llama 3.3)',
-    googleSheetSync: {
-      spreadsheetId: SPREADSHEET_ID,
-      productsCount: cachedProducts.length,
-      lastSync: lastSyncTime
-    }
+    aiEngine: 'Groq Persuasive Sales AI'
   });
 });
 
@@ -344,8 +324,7 @@ app.get('/health', (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`====================================================`);
-  console.log(`🍓 COCO RICCO BOT 24/7 — IA REAL GROQ COMPOUND ACTIVA`);
-  console.log(`🔑 Clave Groq Configurada: SÍ`);
+  console.log(`🍓 COCO RICCO BOT 24/7 — IA DE VENTAS PERSUASIVAS ACTIVA`);
   console.log(`PUERTO: ${PORT}`);
   console.log(`====================================================`);
 });
