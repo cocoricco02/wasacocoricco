@@ -1,4 +1,5 @@
-require('dotenv').config();
+try { require('dotenv').config(); } catch (e) {}
+
 const express = require('express');
 const http = require('http');
 const path = require('path');
@@ -12,7 +13,6 @@ const {
   fetchLatestBaileysVersion
 } = require('@whiskeysockets/baileys');
 const pino = require('pino');
-const OpenAI = require('openai');
 
 const app = express();
 const server = http.createServer(app);
@@ -23,9 +23,7 @@ const SPREADSHEET_ID = process.env.SPREADSHEET_ID || '1ssGOSUFp0TK478tcPej1sWyg_
 const REPARTIDOR_PHONE = '51916982923@s.whatsapp.net';
 const VERCEL_CATALOG_URL = 'https://carta-cocoricco.vercel.app';
 const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || 'http://localhost:5678/webhook/whatsapp-inbound';
-
-// OPENAI CLIENT (OPTIONAL DIRECT ENGINE)
-const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 
 let cachedProducts = [];
 let lastSyncTime = null;
@@ -98,17 +96,6 @@ async function syncProductsFromGoogleSheets() {
 syncProductsFromGoogleSheets();
 setInterval(syncProductsFromGoogleSheets, 30000);
 
-function getProductStock(p) {
-  const raw = p['Stock Disponible'] || p.Stock_Disponible || p.Stock_Actual || p.Stock || 0;
-  return Number(raw) || 0;
-}
-
-function isProductAvailable(p) {
-  const status = (p.Estado_Stock || p.Estado || 'Disponible').toString().toLowerCase();
-  const stock = getProductStock(p);
-  return !status.includes('agotado') && stock > 0;
-}
-
 // -------------------------------------------------------------
 // ENVIAR MENSAJE A N8N WEBHOOK
 // -------------------------------------------------------------
@@ -157,7 +144,6 @@ async function forwardToN8n(from, text, hasImage = false) {
       );
 
       req.on('error', (err) => {
-        console.log(`[n8n Webhook] No responde en ${N8N_WEBHOOK_URL}: ${err.message}`);
         resolve(null);
       });
 
@@ -169,90 +155,97 @@ async function forwardToN8n(from, text, hasImage = false) {
       req.write(payload);
       req.end();
     } catch (err) {
-      console.error('[n8n Webhook Error]:', err.message);
       resolve(null);
     }
   });
 }
 
 // -------------------------------------------------------------
-// MOTOR DE IA CONVERSACIONAL (OPENAI O N8N DIRECTO)
+// LLAMADA DIRECTA A OPENAI (REST API NATIVA SIN DEPENDENCIAS)
 // -------------------------------------------------------------
-function buildSystemPrompt() {
-  const stockSummary = cachedProducts.map(p => {
-    const stock = getProductStock(p);
-    const avail = isProductAvailable(p);
-    return `• ${p.Nombre_Producto} (${p.Medida_Detalle}): S/. ${p.Precio_Soles} | Stock: ${avail ? stock + ' unidades' : 'AGOTADO'}`;
-  }).join('\n');
+async function callOpenAiNative(prompt, history) {
+  if (!OPENAI_API_KEY) return null;
 
-  return `Eres el Asesor Virtual Oficial de "Coco Ricco" (Heladería Artesanal & Fresas con Crema) en Jaén, Cajamarca, Perú.
+  const messages = [
+    {
+      role: 'system',
+      content: `Eres el Asesor Virtual Oficial de 'Coco Ricco' (Heladería Artesanal & Fresas con Crema) en Jaén, Cajamarca, Perú.
+Tu tono es 100% humano, alegre, cálido, empático y servicial. Usa emojis (🍓, 🥥, 🍦, 😊, 🛵).
+NUNCA respondas con respuestas robóticas o pedidos falsos.
+Carta Virtual Oficial: ${VERCEL_CATALOG_URL}
+Pagos: Yape / Plin al 938 955 940 (Coco Ricco) o Efectivo en Jaén.
+Horario: 11:00 AM a 10:00 PM.
+Productos: Vasos de fresas con crema (5oz S/5, 8oz S/8, 10oz S/10, 12oz S/12), Helado en Tazón de Coco Natural S/12, Helado Copa S/8, Paletas artesanales S/6 (con/sin leche Nestlé).`
+    },
+    ...history
+  ];
 
-TU TONO DE VOZ:
-- Eres 100% humano, alegre, cálido, empático y servicial (como una persona real que atiende por WhatsApp).
-- Usa emojis con gusto y naturalidad: 🍓, 🥥, 🍦, 😊, 🛵, ✨.
-- NUNCA respondas con respuestas robóticas o confirmaciones de pedidos falsos.
-- Si el cliente solo pregunta "¿cómo hago para hacer un pedido?", "¿qué venden?", o dice "no hice ningún pedido", responde a su pregunta con total naturalidad y calidez.
+  const payload = JSON.stringify({
+    model: 'gpt-4o-mini',
+    messages: messages,
+    temperature: 0.7,
+    max_tokens: 300
+  });
 
-INFORMACIÓN DEL NEGOCIO (COCO RICCO):
-- Ubicación: Jaén, Cajamarca, Perú.
-- Horario de Atención: Lunes a Domingo de 11:00 AM a 10:00 PM.
-- Delivery: Rápido a toda la ciudad de Jaén (tiempo aproximado de 20 a 30 minutos).
-- Carta Virtual con fotos reales: ${VERCEL_CATALOG_URL}
-- Métodos de Pago: Yape o Plin al número oficial 938 955 940 (a nombre de Coco Ricco), o Efectivo contra entrega en Jaén.
+  return new Promise((resolve) => {
+    const req = https.request({
+      hostname: 'api.openai.com',
+      port: 443,
+      path: '/v1/chat/completions',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${OPENAI_API_KEY}`,
+        'Content-Length': Buffer.byteLength(payload)
+      },
+      timeout: 10000
+    }, (res) => {
+      let body = '';
+      res.on('data', chunk => body += chunk);
+      res.on('end', () => {
+        try {
+          const json = JSON.parse(body);
+          resolve(json.choices?.[0]?.message?.content || null);
+        } catch (e) {
+          resolve(null);
+        }
+      });
+    });
 
-NUESTROS PRODUCTOS:
-1. Fresas con Crema Artesanales (con crema de la casa, fudge, chantilly y toppings como Oreo, Brownie, M&M):
-   - Vaso 5 oz: S/. 5.00
-   - Vaso 8 oz: S/. 8.00 (El más pedido)
-   - Vaso 10 oz: S/. 10.00
-   - Vaso 12 oz Mega: S/. 12.00
-   - Vaso Especial Oreo & M&M (12 oz): S/. 12.00
-2. Helados en Tazón de Coco Natural (S/. 12.00): Servidos en cáscara real de coco.
-3. Helado Artesanal en Copa 2 Bolas (S/. 8.00): 100% pura fruta natural.
-4. Paletas Artesanales (S/. 6.00): Sabores de Coco, Lúcuma, Arándano, Oreo, Fudge de Chocolate y Mango Tropical.
-   - Opción 1: Rellenas CON Leche Nestlé por dentro (leche condensada cremosa).
-   - Opción 2: SIN Leche (100% pura fruta natural fresca, ideal si no consumen lácteos).
-
-STOCK EN GOOGLE SHEETS EN VIVO:
-${stockSummary || 'Stock disponible en todas las presentaciones'}`;
+    req.on('error', () => resolve(null));
+    req.on('timeout', () => { req.destroy(); resolve(null); });
+    req.write(payload);
+    req.end();
+  });
 }
 
+// -------------------------------------------------------------
+// MOTOR CONVERSACIONAL INTELIGENTE
+// -------------------------------------------------------------
 async function generateConversationalResponse(from, text) {
   const cleanPhone = from.replace(/[^0-9]/g, '');
 
   // 1. Intentar primero con el Agente de n8n
   const n8nReply = await forwardToN8n(from, text);
   if (n8nReply) {
-    console.log(`[Respuesta generada por n8n AI Agent]: "${n8nReply}"`);
+    console.log(`[n8n AI Response]: "${n8nReply}"`);
     return n8nReply;
   }
 
-  // 2. Si n8n no está respondiendo, intentar con OpenAI
-  if (openai) {
-    try {
-      if (!conversationHistory[cleanPhone]) conversationHistory[cleanPhone] = [];
-      conversationHistory[cleanPhone].push({ role: 'user', content: text });
-      if (conversationHistory[cleanPhone].length > 8) conversationHistory[cleanPhone] = conversationHistory[cleanPhone].slice(-8);
+  // 2. Intentar con OpenAI si la clave está configurada
+  if (OPENAI_API_KEY) {
+    if (!conversationHistory[cleanPhone]) conversationHistory[cleanPhone] = [];
+    conversationHistory[cleanPhone].push({ role: 'user', content: text });
+    if (conversationHistory[cleanPhone].length > 8) conversationHistory[cleanPhone] = conversationHistory[cleanPhone].slice(-8);
 
-      const completion = await openai.chat.completions.create({
-        model: 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: buildSystemPrompt() },
-          ...conversationHistory[cleanPhone]
-        ],
-        temperature: 0.7,
-        max_tokens: 300
-      });
-
-      const reply = completion.choices[0].message.content;
-      conversationHistory[cleanPhone].push({ role: 'assistant', content: reply });
-      return reply;
-    } catch (e) {
-      console.error('[OpenAI Error]:', e.message);
+    const openaiReply = await callOpenAiNative(text, conversationHistory[cleanPhone]);
+    if (openaiReply) {
+      conversationHistory[cleanPhone].push({ role: 'assistant', content: openaiReply });
+      return openaiReply;
     }
   }
 
-  // 3. Motor Conversacional Inteligente Local (Cero palabras clave rígidas)
+  // 3. Motor Conversacional Humano (Cero plantillas fijas de error)
   const clean = text.toLowerCase().trim();
 
   if (clean.includes('no hice') || clean.includes('no he hecho') || clean.includes('no pedi') || clean.includes('equivoc') || clean.includes('disculpa')) {
@@ -328,7 +321,7 @@ async function connectToWhatsApp() {
       if (!msg.message || msg.key.fromMe) continue;
 
       const from = msg.key.remoteJid;
-      if (from.endsWith('@g.us')) continue; // Ignore groups
+      if (from.endsWith('@g.us')) continue;
 
       const text =
         msg.message.conversation ||
@@ -339,12 +332,11 @@ async function connectToWhatsApp() {
       const hasImage = !!msg.message.imageMessage;
       if (!text && !hasImage) continue;
 
-      const cleanText = text.trim().toLowerCase();
-      console.log(`[Mensaje Recibido de ${from}]: "${text}" (Tiene Imagen: ${hasImage})`);
+      console.log(`[Mensaje Recibido de ${from}]: "${text}"`);
 
-      // 0. MOTORIZADO (916982923)
+      // Motorizado (916982923)
       if (from.includes('916982923') || from === REPARTIDOR_PHONE) {
-        if (cleanText.includes('entregado')) {
+        if (text.toLowerCase().includes('entregado')) {
           const matchId = text.match(/PED-\d+/i);
           const orderCode = matchId ? matchId[0].toUpperCase() : 'Último Pedido';
           
@@ -355,7 +347,6 @@ async function connectToWhatsApp() {
         }
       }
 
-      // Procesar mensaje a través del motor de Inteligencia Artificial
       const aiReply = await generateConversationalResponse(from, text);
       if (aiReply) {
         await sock.sendMessage(from, { text: aiReply });
@@ -391,9 +382,6 @@ app.get('/health', (req, res) => {
 server.listen(PORT, () => {
   console.log(`====================================================`);
   console.log(`🍓 COCO RICCO BOT 24/7 — GATEWAY DE IA DEFINITIVO ACTIVO`);
-  console.log(`🔗 Webhook de n8n configurado: ${N8N_WEBHOOK_URL}`);
-  console.log(`📊 Google Sheet ID: ${SPREADSHEET_ID}`);
-  console.log(`🛵 Motorizado: ${REPARTIDOR_PHONE}`);
-  console.log(`🌐 Panel QR Web: http://localhost:${PORT}`);
+  console.log(`PUERTO: ${PORT}`);
   console.log(`====================================================`);
 });
