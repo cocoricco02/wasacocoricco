@@ -22,7 +22,7 @@ const PORT = process.env.PORT || 3005;
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID || '1ssGOSUFp0TK478tcPej1sWyg_dySw6oW';
 const REPARTIDOR_PHONE = '51916982923@s.whatsapp.net';
 const VERCEL_CATALOG_URL = 'https://carta-cocoricco.vercel.app';
-const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || 'http://localhost:5678/webhook/whatsapp-inbound';
+const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || '';
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 
 let cachedProducts = [];
@@ -96,10 +96,23 @@ async function syncProductsFromGoogleSheets() {
 syncProductsFromGoogleSheets();
 setInterval(syncProductsFromGoogleSheets, 30000);
 
+function getProductStock(p) {
+  const raw = p['Stock Disponible'] || p.Stock_Disponible || p.Stock_Actual || p.Stock || 0;
+  return Number(raw) || 0;
+}
+
+function isProductAvailable(p) {
+  const status = (p.Estado_Stock || p.Estado || 'Disponible').toString().toLowerCase();
+  const stock = getProductStock(p);
+  return !status.includes('agotado') && stock > 0;
+}
+
 // -------------------------------------------------------------
-// ENVIAR MENSAJE A N8N WEBHOOK
+// ENVIAR MENSAJE A N8N WEBHOOK CON FILTRO DE ERRORES
 // -------------------------------------------------------------
 async function forwardToN8n(from, text, hasImage = false) {
+  if (!N8N_WEBHOOK_URL || !N8N_WEBHOOK_URL.startsWith('http')) return null;
+
   const cleanPhone = from.replace(/[^0-9]/g, '');
   const payload = JSON.stringify({
     phone: cleanPhone,
@@ -126,32 +139,40 @@ async function forwardToN8n(from, text, hasImage = false) {
             'Content-Type': 'application/json',
             'Content-Length': Buffer.byteLength(payload)
           },
-          timeout: 10000
+          timeout: 12000
         },
         (res) => {
           let data = '';
           res.on('data', chunk => data += chunk);
           res.on('end', () => {
+            // Si n8n devolvió código de error (como 404 webhook no registrado)
+            if (res.statusCode >= 400 || data.includes('not registered') || data.includes('Workflow could not be started')) {
+              console.log(`[n8n Webhook Warning]: n8n devolvió código ${res.statusCode}. Usando motor conversacional de respaldo.`);
+              resolve(null);
+              return;
+            }
+
             try {
               const parsed = JSON.parse(data);
               const responseText = parsed.response || parsed.output || parsed.text || parsed.message;
-              resolve(responseText || null);
+              if (responseText && !responseText.includes('not registered')) {
+                resolve(responseText);
+              } else {
+                resolve(null);
+              }
             } catch (e) {
-              resolve(data && data.length > 5 ? data : null);
+              if (data && data.length > 5 && !data.includes('not registered') && !data.includes('error')) {
+                resolve(data);
+              } else {
+                resolve(null);
+              }
             }
           });
         }
       );
 
-      req.on('error', (err) => {
-        resolve(null);
-      });
-
-      req.on('timeout', () => {
-        req.destroy();
-        resolve(null);
-      });
-
+      req.on('error', () => resolve(null));
+      req.on('timeout', () => { req.destroy(); resolve(null); });
       req.write(payload);
       req.end();
     } catch (err) {
@@ -161,66 +182,7 @@ async function forwardToN8n(from, text, hasImage = false) {
 }
 
 // -------------------------------------------------------------
-// LLAMADA DIRECTA A OPENAI (REST API NATIVA SIN DEPENDENCIAS)
-// -------------------------------------------------------------
-async function callOpenAiNative(prompt, history) {
-  if (!OPENAI_API_KEY) return null;
-
-  const messages = [
-    {
-      role: 'system',
-      content: `Eres el Asesor Virtual Oficial de 'Coco Ricco' (Heladería Artesanal & Fresas con Crema) en Jaén, Cajamarca, Perú.
-Tu tono es 100% humano, alegre, cálido, empático y servicial. Usa emojis (🍓, 🥥, 🍦, 😊, 🛵).
-NUNCA respondas con respuestas robóticas o pedidos falsos.
-Carta Virtual Oficial: ${VERCEL_CATALOG_URL}
-Pagos: Yape / Plin al 938 955 940 (Coco Ricco) o Efectivo en Jaén.
-Horario: 11:00 AM a 10:00 PM.
-Productos: Vasos de fresas con crema (5oz S/5, 8oz S/8, 10oz S/10, 12oz S/12), Helado en Tazón de Coco Natural S/12, Helado Copa S/8, Paletas artesanales S/6 (con/sin leche Nestlé).`
-    },
-    ...history
-  ];
-
-  const payload = JSON.stringify({
-    model: 'gpt-4o-mini',
-    messages: messages,
-    temperature: 0.7,
-    max_tokens: 300
-  });
-
-  return new Promise((resolve) => {
-    const req = https.request({
-      hostname: 'api.openai.com',
-      port: 443,
-      path: '/v1/chat/completions',
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${OPENAI_API_KEY}`,
-        'Content-Length': Buffer.byteLength(payload)
-      },
-      timeout: 10000
-    }, (res) => {
-      let body = '';
-      res.on('data', chunk => body += chunk);
-      res.on('end', () => {
-        try {
-          const json = JSON.parse(body);
-          resolve(json.choices?.[0]?.message?.content || null);
-        } catch (e) {
-          resolve(null);
-        }
-      });
-    });
-
-    req.on('error', () => resolve(null));
-    req.on('timeout', () => { req.destroy(); resolve(null); });
-    req.write(payload);
-    req.end();
-  });
-}
-
-// -------------------------------------------------------------
-// MOTOR CONVERSACIONAL INTELIGENTE
+// MOTOR CONVERSACIONAL INTELIGENTE (ESTILO META AI)
 // -------------------------------------------------------------
 async function generateConversationalResponse(from, text) {
   const cleanPhone = from.replace(/[^0-9]/g, '');
@@ -232,35 +194,59 @@ async function generateConversationalResponse(from, text) {
     return n8nReply;
   }
 
-  // 2. Intentar con OpenAI si la clave está configurada
-  if (OPENAI_API_KEY) {
-    if (!conversationHistory[cleanPhone]) conversationHistory[cleanPhone] = [];
-    conversationHistory[cleanPhone].push({ role: 'user', content: text });
-    if (conversationHistory[cleanPhone].length > 8) conversationHistory[cleanPhone] = conversationHistory[cleanPhone].slice(-8);
-
-    const openaiReply = await callOpenAiNative(text, conversationHistory[cleanPhone]);
-    if (openaiReply) {
-      conversationHistory[cleanPhone].push({ role: 'assistant', content: openaiReply });
-      return openaiReply;
-    }
-  }
-
-  // 3. Motor Conversacional Humano (Cero plantillas fijas de error)
+  // 2. Motor Conversacional Humano y Cálido (Respaldo Inteligente)
   const clean = text.toLowerCase().trim();
 
-  if (clean.includes('no hice') || clean.includes('no he hecho') || clean.includes('no pedi') || clean.includes('equivoc') || clean.includes('disculpa')) {
-    return `¡Ah, disculpa la confusión! 😊 No te preocupes para nada, no se ha generado ningún pedido ni cobro.\n\nSi en algún momento deseas probar alguna de nuestras fresas con crema o helados en coco, avísame con toda confianza. 🍓🥥`;
+  // Aclaración / Negación
+  if (
+    clean.includes('no hice') ||
+    clean.includes('no he hecho') ||
+    clean.includes('no pedi') ||
+    clean.includes('no ordene') ||
+    clean.includes('equivoc') ||
+    clean.includes('disculpa') ||
+    clean === 'error' ||
+    clean === '???'
+  ) {
+    return `¡Ah, disculpa la confusión! 😊 No te preocupes para nada, no se ha generado ningún pedido ni cobro.\n\nSi en algún momento deseas consultar sobre nuestros vasitos de fresas con crema o helados en tazón de coco, escríbeme con toda confianza. 🍓🥥`;
   }
 
-  if (clean.includes('como hago') || clean.includes('como pido') || clean.includes('como hacer un pedido') || clean.includes('quiero saber como pedir')) {
-    return `¡Es súper fácil! 😊 Solo indícanos por aquí:\n1. Qué vasitos, helados o paletas deseas llevar.\n2. Si es para delivery (indícanos tu dirección en Jaén) o recojo en nuestro local.\n3. Si pagarás con Yape, Plin o Efectivo.\n\n📸 Puedes ver fotos de todo en nuestra carta: 👉 ${VERCEL_CATALOG_URL}\n\n¿Qué se te antoja para hoy? 🍓🥥`;
+  // Consulta de cómo pedir / hacer pedidos
+  if (
+    clean.includes('hacen pedidos') ||
+    clean.includes('hacen pedido') ||
+    clean.includes('como hago') ||
+    clean.includes('como pido') ||
+    clean.includes('como hacer un pedido') ||
+    clean.includes('toman pedidos') ||
+    clean.includes('puedo pedir')
+  ) {
+    return `¡Sí, claro que sí! Tomamos pedidos directamente por aquí para *delivery en todo Jaén* o para *recojo en nuestro local*. 🛵🍓\n\nSolo indícanos por aquí:\n1. Qué vasitos, helados o paletas deseas llevar.\n2. Si es para delivery (indícanos tu dirección en Jaén) o recojo en tienda.\n3. Si pagarás con *Yape, Plin al 938 955 940* o *Efectivo*.\n\n📸 Puedes ver todas nuestras fotos y productos aquí: 👉 ${VERCEL_CATALOG_URL}\n\n¿Qué se te antoja para hoy? 😊`;
   }
 
-  if (clean.includes('que venden') || clean.includes('que tienen') || clean.includes('que ofrecen') || clean.includes('venden helados') || clean.includes('carta') || clean.includes('fotos') || clean.includes('catalogo')) {
-    return `¡Hola! Qué gusto saludarte. En *Coco Ricco* preparamos delicias 100% artesanales y naturales: 🍓🥥\n\n• *Fresas con Crema:* Vasitos de 5oz (S/5), 8oz (S/8), 10oz (S/10) y 12oz (S/12) con crema de la casa y toppings deliciosos.\n• *Helados en Tazón de Coco Natural:* En coco real a S/. 12.00.\n• *Helado en Copa:* 2 bolas de pura fruta a S/. 8.00.\n• *Paletas Artesanales:* A S/. 6.00 (rellenas con Leche Nestlé o 100% Pura Fruta).\n\n📸 *Mira fotos reales en nuestra Carta Virtual:* 👉 ${VERCEL_CATALOG_URL}\n\n¿Te gustaría que te preparemos algo rico? 😊`;
+  // Consulta de qué venden / productos / carta / fotos
+  if (
+    clean.includes('que venden') ||
+    clean.includes('que tienen') ||
+    clean.includes('que ofrecen') ||
+    clean.includes('venden helados') ||
+    clean.includes('venden fresas') ||
+    clean.includes('carta') ||
+    clean.includes('fotos') ||
+    clean.includes('catalogo') ||
+    clean.includes('menu') ||
+    clean.includes('precios')
+  ) {
+    return `¡Hola! Qué gusto saludarte. En *Coco Ricco* preparamos delicias 100% artesanales y naturales: 🍓🥥\n\n• *Fresas con Crema:* Vasitos de 5oz (S/5), 8oz (S/8), 10oz (S/10) y 12oz Mega (S/12) con crema de la casa y toppings deliciosos (Oreo, Brownie, M&M, Fudge).\n• *Helados en Tazón de Coco Natural:* Servidos en cáscara real de coco a S/. 12.00.\n• *Helado en Copa:* 2 bolas de pura fruta a S/. 8.00.\n• *Paletas Artesanales:* A S/. 6.00 (opciones rellenas con *Leche Nestlé* o *100% Pura Fruta*).\n\n📸 *Mira fotos reales en nuestra Carta Virtual:* 👉 ${VERCEL_CATALOG_URL}\n\n¿Te gustaría probar alguna delicia hoy? 😊`;
   }
 
-  return `¡Hola! 👋🍓 En *Coco Ricco* estamos atentos para atenderte con mucho gusto.\n\n• 📸 Fotos y productos: 👉 ${VERCEL_CATALOG_URL}\n• 🛵 Delivery en todo Jaén y atención en local (11am a 10pm).\n\n¿Tienes alguna duda o te gustaría hacer un pedido? Cuéntame con confianza. 😊🥥`;
+  // Delivery / Ubicación / Horario
+  if (clean.includes('delivery') || clean.includes('envio') || clean.includes('donde') || clean.includes('ubicacion') || clean.includes('horario')) {
+    return `🛵 *COCO RICCO — JAÉN* 🍓\n\n📍 *Local:* Jaén, Cajamarca, Perú.\n⏰ *Horario:* Lunes a Domingo de 11:00 AM a 10:00 PM.\n🛵 *Delivery:* Cobertura rápida en toda la ciudad de Jaén (20 a 30 min aprox).\n\n🌐 Carta Virtual con Fotos: ${VERCEL_CATALOG_URL}\n\n¿Deseas que te enviemos algún pedido? 😊`;
+  }
+
+  // Saludo general
+  return `¡Hola! 👋🍓 Qué gusto saludarte. Bienvenido a *Coco Ricco* (Heladería Artesanal & Fresas con Crema).\n\n• 📸 Fotos y productos: 👉 ${VERCEL_CATALOG_URL}\n• 🛵 Delivery en todo Jaén y atención en local (11am a 10pm).\n\n¿Tienes alguna duda o te gustaría hacer un pedido? Cuéntame con confianza. 😊🥥`;
 }
 
 // -------------------------------------------------------------
