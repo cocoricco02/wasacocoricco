@@ -18,14 +18,15 @@ const app = express();
 const server = http.createServer(app);
 const PORT = process.env.PORT || 3005;
 
-// CONFIG (con .trim() para limpiar espacios y saltos de línea)
+// CONFIG
 const SPREADSHEET_ID = (process.env.SPREADSHEET_ID || '1ssGOSUFp0TK478tcPej1sWyg_dySw6oW').trim();
 const REPARTIDOR_PHONE = '51916982923@s.whatsapp.net';
 const VERCEL_CATALOG_URL = 'https://carta-cocoricco.vercel.app';
-const N8N_WEBHOOK_URL = (process.env.N8N_WEBHOOK_URL || '').trim();
+const GROQ_API_KEY = (process.env.GROQ_API_KEY || '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').trim();
 
 let cachedProducts = [];
 let lastSyncTime = null;
+const conversationHistory = {};
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
@@ -46,106 +47,182 @@ const ORDERS_FILE = path.join(DATA_DIR, 'pedidos.json');
 if (!fs.existsSync(ORDERS_FILE)) fs.writeFileSync(ORDERS_FILE, JSON.stringify([], null, 2));
 
 // -------------------------------------------------------------
-// ENVIAR MENSAJE A N8N WEBHOOK
+// GOOGLE SHEETS LIVE SYNC
 // -------------------------------------------------------------
-async function forwardToN8n(from, text, hasImage = false) {
-  const cleanUrl = N8N_WEBHOOK_URL.trim();
-  if (!cleanUrl || !cleanUrl.startsWith('http')) {
-    console.log('[n8n Webhook]: No hay URL de n8n configurada.');
-    return null;
-  }
+function fetchGoogleSheetTab(tabName) {
+  return new Promise((resolve, reject) => {
+    const url = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(tabName)}`;
+    https.get(url, (res) => {
+      let body = '';
+      res.on('data', chunk => body += chunk);
+      res.on('end', () => {
+        try {
+          const jsonStr = body.replace(/^[^{]*\{/, '{').replace(/\}[^}]*$/, '}');
+          const parsed = JSON.parse(jsonStr);
+          const cols = parsed.table.cols.map(c => c.label || c.id);
+          const rows = parsed.table.rows.map(r => {
+            const rowObj = {};
+            r.c.forEach((cell, idx) => {
+              const colName = cols[idx];
+              if (colName) {
+                rowObj[colName] = cell ? (cell.f || cell.v) : '';
+              }
+            });
+            return rowObj;
+          });
+          resolve(rows);
+        } catch (e) {
+          reject(e);
+        }
+      });
+    }).on('error', reject);
+  });
+}
 
-  const cleanPhone = from.replace(/[^0-9]/g, '');
+async function syncProductsFromGoogleSheets() {
+  try {
+    const rows = await fetchGoogleSheetTab('PRODUCTOS_STOCK');
+    if (rows && rows.length > 0) {
+      cachedProducts = rows;
+      lastSyncTime = new Date().toLocaleTimeString();
+      console.log(`[Google Sheets] ✓ ${rows.length} productos sincronizados (${lastSyncTime})`);
+    }
+  } catch (err) {
+    console.error('[Google Sheets Error]:', err.message);
+  }
+}
+
+syncProductsFromGoogleSheets();
+setInterval(syncProductsFromGoogleSheets, 30000);
+
+function getProductStock(p) {
+  const raw = p['Stock Disponible'] || p.Stock_Disponible || p.Stock_Actual || p.Stock || 0;
+  return Number(raw) || 0;
+}
+
+function isProductAvailable(p) {
+  const status = (p.Estado_Stock || p.Estado || 'Disponible').toString().toLowerCase();
+  const stock = getProductStock(p);
+  return !status.includes('agotado') && stock > 0;
+}
+
+// -------------------------------------------------------------
+// MOTOR IA GENERATIVA REAL (GROQ COMPOUND / LLAMA 3.3)
+// -------------------------------------------------------------
+function buildSystemPrompt() {
+  const stockSummary = cachedProducts.map(p => {
+    const stock = getProductStock(p);
+    const avail = isProductAvailable(p);
+    return `• ${p.Nombre_Producto} (${p.Medida_Detalle}): S/. ${p.Precio_Soles} | Stock disponible: ${avail ? stock + ' unidades' : 'AGOTADO'}`;
+  }).join('\n');
+
+  return `Eres el Asesor Virtual Oficial de 'Coco Ricco' (Heladería Artesanal & Fresas con Crema) en Jaén, Cajamarca, Perú.
+
+TU FORMA DE HABLAR Y PERSONALIDAD:
+- Eres 100% humano, alegre, cálido, empático, conversacional y atento (como una persona real que atiende por WhatsApp con amabilidad peruana).
+- Usa emojis con gusto y naturalidad (🍓, 🥥, 🍦, 😊, 🛵, ✨).
+- Responde de forma concisa y amigable a lo que el cliente te pregunte o converse contigo. NUNCA respondas con menús robóticos rígidos si solo te están saludando o preguntando tu opinión.
+- Si te preguntan si los precios son caros, explica con calidez que son precios súper justos y accesibles (vasitos desde S/ 5.00) preparados con fresas frescas del día y crema artesanal de la mejor calidad.
+
+INFORMACIÓN DEL NEGOCIO (COCO RICCO):
+- Ubicación: Jaén, Cajamarca, Perú.
+- Horario de Atención: Lunes a Domingo de 11:00 AM a 10:00 PM.
+- Delivery: Cobertura rápida a toda la ciudad de Jaén (20 a 30 min aprox).
+- Carta Virtual Oficial con fotos en alta definición: ${VERCEL_CATALOG_URL}
+- Métodos de Pago: Yape o Plin al número oficial 938 955 940 (a nombre de Coco Ricco), o Efectivo contra entrega en Jaén.
+
+NUESTROS PRODUCTOS Y PRECIOS:
+1. Fresas con Crema Artesanales (con crema de la casa, fudge, chantilly y toppings como Oreo, Brownie, M&M):
+   - Vaso 5 oz: S/. 5.00
+   - Vaso 8 oz: S/. 8.00 (El más pedido)
+   - Vaso 10 oz: S/. 10.00
+   - Vaso 12 oz Mega: S/. 12.00
+   - Vaso Especial Oreo & M&M (12 oz): S/. 12.00
+2. Helados en Tazón de Coco Natural: S/. 12.00 (servidos en cáscara real de coco con jalea de maracuyá o natural).
+3. Helado Artesanal en Copa 2 Bolas: S/. 8.00 (100% pura fruta natural).
+4. Paletas Artesanales: S/. 6.00 (Sabores: Coco, Lúcuma, Arándano, Oreo, Fudge de Chocolate y Mango Tropical).
+   - Opción 1: Rellenas CON Leche Nestlé adentro (leche condensada cremosa).
+   - Opción 2: SIN Leche (100% pura fruta natural fresca, ideal si no consumen lácteos).
+
+STOCK EN GOOGLE SHEETS EN VIVO:
+${stockSummary || 'Stock disponible en todas las presentaciones'}
+
+ATENCIÓN Y TOMA DE PEDIDOS:
+- Si el cliente desea pedir, indícale amablemente que te dé su dirección en Jaén y su método de pago (Yape/Plin o Efectivo) para prepararlo de inmediato.`;
+}
+
+async function callGroqAi(prompt, userHistory) {
+  if (!GROQ_API_KEY) return null;
+
+  const messages = [
+    { role: 'system', content: buildSystemPrompt() },
+    ...userHistory,
+    { role: 'user', content: prompt }
+  ];
+
   const payload = JSON.stringify({
-    phone: cleanPhone,
-    from: from,
-    message: text,
-    text: text,
-    hasImage: hasImage,
-    timestamp: new Date().toISOString()
+    model: 'groq/compound-mini',
+    messages: messages,
+    temperature: 0.7,
+    max_tokens: 350
   });
 
   return new Promise((resolve) => {
-    try {
-      const urlObj = new URL(cleanUrl);
-      const isHttps = urlObj.protocol === 'https:';
-      const client = isHttps ? https : http;
-
-      console.log(`[n8n Webhook] Enviando a: ${cleanUrl}`);
-
-      const req = client.request(
-        {
-          hostname: urlObj.hostname,
-          port: urlObj.port || (isHttps ? 443 : 80),
-          path: urlObj.pathname + urlObj.search,
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Content-Length': Buffer.byteLength(payload)
-          },
-          timeout: 25000 // 25s timeout para que el AI Agent de n8n piense
+    const req = https.request(
+      {
+        hostname: 'api.groq.com',
+        port: 443,
+        path: '/openai/v1/chat/completions',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${GROQ_API_KEY}`,
+          'Content-Length': Buffer.byteLength(payload)
         },
-        (res) => {
-          let data = '';
-          res.on('data', chunk => data += chunk);
-          res.on('end', () => {
-            console.log(`[n8n Webhook Response (${res.statusCode})]:`, data);
+        timeout: 15000
+      },
+      (res) => {
+        let body = '';
+        res.on('data', c => body += c);
+        res.on('end', () => {
+          try {
+            const parsed = JSON.parse(body);
+            const text = parsed.choices?.[0]?.message?.content;
+            resolve(text || null);
+          } catch (e) {
+            resolve(null);
+          }
+        });
+      }
+    );
 
-            if (res.statusCode >= 400 || data.includes('not registered')) {
-              resolve(null);
-              return;
-            }
-
-            try {
-              const parsed = JSON.parse(data);
-              const responseText = parsed.response || parsed.output || parsed.text || parsed.message;
-              resolve(responseText || null);
-            } catch (e) {
-              if (data && data.trim().length > 0 && !data.includes('not registered')) {
-                resolve(data.trim());
-              } else {
-                resolve(null);
-              }
-            }
-          });
-        }
-      );
-
-      req.on('error', (err) => {
-        console.error('[n8n Webhook Request Error]:', err.message);
-        resolve(null);
-      });
-
-      req.on('timeout', () => {
-        console.error('[n8n Webhook Timeout]: El agente de n8n tardó más de 25s');
-        req.destroy();
-        resolve(null);
-      });
-
-      req.write(payload);
-      req.end();
-    } catch (err) {
-      console.error('[n8n URL Parse Error]:', err.message);
-      resolve(null);
-    }
+    req.on('error', () => resolve(null));
+    req.on('timeout', () => { req.destroy(); resolve(null); });
+    req.write(payload);
+    req.end();
   });
 }
 
 // -------------------------------------------------------------
-// RESPALDO CONVERSACIONAL (SOLO SI N8N ESTÁ APAGADO)
+// RESPUESTA CONVERSACIONAL
 // -------------------------------------------------------------
-function generateFallbackResponse(text) {
-  const clean = text.toLowerCase().trim();
+async function getConversationalReply(from, text) {
+  const cleanPhone = from.replace(/[^0-9]/g, '');
 
-  if (clean.includes('no hice') || clean.includes('no he hecho') || clean.includes('no pedi') || clean.includes('equivoc') || clean.includes('disculpa')) {
-    return `¡Ah, disculpa la confusión! 😊 No te preocupes, no se ha generado ningún pedido.\n\nSi deseas consultar sobre nuestros helados o vasitos de fresas con crema, avísame con toda confianza. 🍓🥥`;
+  if (!conversationHistory[cleanPhone]) conversationHistory[cleanPhone] = [];
+  
+  const aiReply = await callGroqAi(text, conversationHistory[cleanPhone]);
+  if (aiReply) {
+    conversationHistory[cleanPhone].push({ role: 'user', content: text });
+    conversationHistory[cleanPhone].push({ role: 'assistant', content: aiReply });
+    if (conversationHistory[cleanPhone].length > 10) {
+      conversationHistory[cleanPhone] = conversationHistory[cleanPhone].slice(-10);
+    }
+    return aiReply;
   }
 
-  if (clean.includes('como hago') || clean.includes('como pido') || clean.includes('como hacer un pedido') || clean.includes('hacen pedidos') || clean.includes('hacen pedido')) {
-    return `¡Sí, claro que sí! Tomamos pedidos para delivery en todo Jaén y recojo en tienda. 🛵🍓\n\nSolo indícanos qué delicias deseas llevar, tu dirección en Jaén y si pagarás con Yape, Plin o Efectivo.\n\n📸 Fotos de la carta: 👉 ${VERCEL_CATALOG_URL}\n\n¿Qué se te antoja para hoy? 😊`;
-  }
-
-  return `¡Hola! 👋🍓 En *Coco Ricco* estamos atentos para atenderte con mucho gusto.\n\n• 📸 Fotos y carta oficial: 👉 ${VERCEL_CATALOG_URL}\n• 🛵 Delivery en todo Jaén y atención en local (11am a 10pm).\n\n¿En qué te podemos ayudar hoy? 😊🥥`;
+  // Respaldo
+  return `¡Hola! 👋🍓 Qué gusto saludarte. En *Coco Ricco* preparamos las mejores fresas con crema y helados artesanales de Jaén.\n\n• 📸 Mira fotos reales en nuestra Carta: 👉 ${VERCEL_CATALOG_URL}\n• 🛵 Delivery rápido en todo Jaén (11am a 10pm).\n\n¿En qué te podemos consentir hoy? 😊🥥`;
 }
 
 // -------------------------------------------------------------
@@ -191,10 +268,10 @@ async function connectToWhatsApp() {
         setTimeout(connectToWhatsApp, 2000);
       }
     } else if (connection === 'open') {
-      connectionStatus = '✓ CONECTADO 24/7 A WHATSAPP';
+      connectionStatus = '✓ CONECTADO 24/7 A WHATSAPP (IA GROQ)';
       qrCodeDataUrl = null;
       connectedNumber = sock.user?.id ? sock.user.id.split(':')[0] : 'Activo';
-      console.log('✓ Bot de Coco Ricco conectado exitosamente a WhatsApp!');
+      console.log('✓ Bot de Coco Ricco (Cerebro IA Groq) conectado exitosamente!');
     }
   });
 
@@ -232,16 +309,10 @@ async function connectToWhatsApp() {
         }
       }
 
-      // 1. Enviar primero al AI Agent de n8n
-      let reply = await forwardToN8n(from, text, hasImage);
-
-      // 2. Si n8n no responde, usar respaldo
-      if (!reply) {
-        reply = generateFallbackResponse(text);
-      }
-
-      if (reply) {
-        await sock.sendMessage(from, { text: reply });
+      // Procesa con IA Generativa Real
+      const aiReply = await getConversationalReply(from, text);
+      if (aiReply) {
+        await sock.sendMessage(from, { text: aiReply });
       }
     }
   });
@@ -258,7 +329,7 @@ app.get('/api/status', (req, res) => {
     qrCode: qrCodeDataUrl,
     connectedNumber: connectedNumber,
     isReady: connectionStatus.includes('CONECTADO'),
-    n8nWebhookUrl: N8N_WEBHOOK_URL,
+    aiEngine: 'Groq Compound (Meta AI / Llama 3.3)',
     googleSheetSync: {
       spreadsheetId: SPREADSHEET_ID,
       productsCount: cachedProducts.length,
@@ -273,7 +344,8 @@ app.get('/health', (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`====================================================`);
-  console.log(`🍓 COCO RICCO BOT 24/7 — GATEWAY DE IA DEFINITIVO ACTIVO`);
-  console.log(`🔗 N8N URL: ${N8N_WEBHOOK_URL}`);
+  console.log(`🍓 COCO RICCO BOT 24/7 — IA REAL GROQ COMPOUND ACTIVA`);
+  console.log(`🔑 Clave Groq Configurada: SÍ`);
+  console.log(`PUERTO: ${PORT}`);
   console.log(`====================================================`);
 });
