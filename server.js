@@ -20,6 +20,7 @@ const PORT = process.env.PORT || 3005;
 
 // CONFIG
 const SPREADSHEET_ID = (process.env.SPREADSHEET_ID || '1ssGOSUFp0TK478tcPej1sWyg_dySw6oW').trim();
+const GOOGLE_SCRIPT_WEBHOOK_URL = (process.env.GOOGLE_SCRIPT_WEBHOOK_URL || '').trim();
 const REPARTIDOR_PHONE = '51916982923@s.whatsapp.net';
 const VERCEL_CATALOG_URL = 'https://carta-cocoricco.vercel.app';
 const GROQ_API_KEY = (process.env.GROQ_API_KEY || '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').trim();
@@ -107,7 +108,94 @@ function isProductAvailable(p) {
 }
 
 // -------------------------------------------------------------
-// MOTOR IA GENERATIVA PERSUASIVA (BREVE, DIRECTA Y VENTAS RÁPIDAS)
+// REGISTRO DE PEDIDO Y ALERTA CON TELÉFONO CLICABLE AL MOTORIZADO
+// -------------------------------------------------------------
+async function processOrderAndDispatch({ from, customerPhone, messageText, address, paymentMethod }) {
+  const orderId = `PED-${Date.now().toString().slice(-4)}`;
+
+  // Detectar si el cliente dio otro número dentro del texto (ej. 987654321)
+  const phoneMatch = messageText.match(/9\d{8}/);
+  const contactPhone = phoneMatch ? phoneMatch[0] : customerPhone;
+  const cleanCallPhone = contactPhone.startsWith('51') ? contactPhone : (contactPhone.length === 9 ? `51${contactPhone}` : contactPhone);
+
+  const newOrder = {
+    id: orderId,
+    timestamp: new Date().toLocaleString(),
+    customerPhone: customerPhone,
+    contactPhone: contactPhone,
+    customerJid: from,
+    orderDetail: messageText,
+    address: address || 'Dirección indicada por cliente',
+    payment: paymentMethod || 'Yape / Efectivo',
+    status: 'En Preparación'
+  };
+
+  // Guardar localmente
+  const existingOrders = JSON.parse(fs.readFileSync(ORDERS_FILE, 'utf8'));
+  existingOrders.push(newOrder);
+  fs.writeFileSync(ORDERS_FILE, JSON.stringify(existingOrders, null, 2));
+
+  console.log(`[NUEVO PEDIDO REGISTRADO]: #${orderId} de +${customerPhone}`);
+
+  // 1. Enviar a Google Apps Script Webhook (si está configurado)
+  if (GOOGLE_SCRIPT_WEBHOOK_URL && GOOGLE_SCRIPT_WEBHOOK_URL.startsWith('http')) {
+    try {
+      const payload = JSON.stringify({
+        action: 'nuevo_pedido',
+        id_pedido: orderId,
+        fecha_hora: new Date().toLocaleString(),
+        cliente_nombre: `Cliente WhatsApp +${customerPhone}`,
+        telefono: contactPhone,
+        detalle_pedido: messageText,
+        direccion: address || 'Jaén',
+        metodo_pago: paymentMethod || 'Yape',
+        tipo_entrega: 'Delivery'
+      });
+
+      const urlObj = new URL(GOOGLE_SCRIPT_WEBHOOK_URL);
+      const req = https.request(urlObj, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) }
+      });
+      req.write(payload);
+      req.end();
+      console.log(`[Google Sheets Webhook]: Pedido #${orderId} sincronizado en la hoja`);
+    } catch (err) {
+      console.error('[Google Script Error]:', err.message);
+    }
+  }
+
+  // 2. ENVIAR TICKET AL MOTORIZADO (916982923) CON LLAMADA DIRECTA
+  if (sock) {
+    try {
+      const alertTicket =
+`🛵 *¡NUEVO PEDIDO PARA DELIVERY — COCO RICCO!* 🍓
+
+📋 *ID Orden:* #${orderId}
+👤 *Cliente:* +${customerPhone}
+📞 *Teléfono para Llamar:* +${contactPhone}
+💬 *Chat Directo WhatsApp:* https://wa.me/${cleanCallPhone}
+🍧 *Detalle:* ${messageText}
+📍 *Dirección de Entrega:* ${address || 'Jaén'}
+💵 *Método de Pago:* ${paymentMethod || 'Yape / Efectivo'}
+⏰ *Hora:* ${new Date().toLocaleTimeString()}
+
+👉 *Cuando atiendas el pedido, responde a este chat con:*
+• *ENTREGADO ${orderId}* (si se entregó con éxito)
+• *RECHAZADO ${orderId}* (si fue cancelado o no recibido)`;
+
+      await sock.sendMessage(REPARTIDOR_PHONE, { text: alertTicket });
+      console.log(`[Motorizado 916982923 Notificado]: Alerta enviada con éxito para la orden #${orderId}`);
+    } catch (err) {
+      console.error('[Error Enviando al Motorizado]:', err.message);
+    }
+  }
+
+  return orderId;
+}
+
+// -------------------------------------------------------------
+// MOTOR IA GENERATIVA PERSUASIVA (GROQ COMPOUND)
 // -------------------------------------------------------------
 function buildSystemPrompt() {
   const stockSummary = cachedProducts
@@ -115,7 +203,7 @@ function buildSystemPrompt() {
     .map(p => {
       const stock = getProductStock(p);
       const avail = isProductAvailable(p);
-      return `• ${p.Nombre_Producto} (${p.Medida_Detalle}): S/. ${p.Precio_Soles} | Stock: ${avail ? stock + ' disponibles' : 'AGOTADO'}`;
+      return `• ${p.Nombre_Producto} (${p.Medida_Detalle}): S/. ${p.Precio_Soles} | Stock disponible: ${avail ? stock + ' unidades' : 'AGOTADO'}`;
     }).join('\n');
 
   return `Eres el Asesor Estrella de Ventas de "Coco Ricco" (Fresas con Crema & Helados Artesanales) en Jaén, Perú.
@@ -132,7 +220,7 @@ DIRECTIVAS CRÍTICAS DE COMUNICACIÓN (VENTAS RÁPIDAS):
 5. CIERRE DE VENTA DIRECTO: Invita a pedir con preguntas de cierre: "¿A qué dirección en Jaén te lo enviamos hoy?" o "¿Cuál se te antoja que te preparemos?".
 6. DATOS DE PAGO: Yape/Plin al 938 955 940 (Coco Ricco) o Efectivo contra entrega. Delivery rápido en Jaén (20 a 30 min).
 
-STOCK ACTUAL:
+STOCK ACTUAL EN GOOGLE SHEETS:
 ${stockSummary || 'Stock disponible en fresas, tazones de coco y paletas'}`;
 }
 
@@ -149,7 +237,7 @@ async function callGroqAi(prompt, userHistory) {
     model: 'groq/compound-mini',
     messages: messages,
     temperature: 0.65,
-    max_tokens: 180 // Respuestas breves y precisas
+    max_tokens: 180
   });
 
   return new Promise((resolve) => {
@@ -189,11 +277,55 @@ async function callGroqAi(prompt, userHistory) {
 }
 
 // -------------------------------------------------------------
-// RESPUESTA CONVERSACIONAL RÁPIDA
+// RESPUESTA CONVERSACIONAL Y DETECTOR INTELIGENTE DE PEDIDOS
 // -------------------------------------------------------------
 async function getConversationalReply(from, text) {
   const cleanPhone = from.replace(/[^0-9]/g, '');
+  const clean = text.toLowerCase().trim();
 
+  // Detectar si el mensaje contiene una confirmación de pedido con dirección
+  const hasAddressIndicator =
+    clean.includes('jr.') ||
+    clean.includes('jr ') ||
+    clean.includes('calle') ||
+    clean.includes('av.') ||
+    clean.includes('av ') ||
+    clean.includes('avenida') ||
+    clean.includes('pasaje') ||
+    clean.includes('frente a') ||
+    clean.includes('costado') ||
+    clean.includes('sector') ||
+    clean.includes('barrio') ||
+    clean.includes('mz') ||
+    clean.includes('lote') ||
+    clean.includes('direccion');
+
+  const hasProductIntent =
+    clean.includes('vaso') ||
+    clean.includes('5oz') ||
+    clean.includes('8oz') ||
+    clean.includes('10oz') ||
+    clean.includes('12oz') ||
+    clean.includes('fresa') ||
+    clean.includes('tazon') ||
+    clean.includes('paleta');
+
+  const isConfirmedOrder = hasAddressIndicator && (hasProductIntent || clean.includes('quiero') || clean.includes('envia') || clean.includes('traeme') || clean.includes('pido'));
+
+  if (isConfirmedOrder) {
+    const payment = clean.includes('yape') ? 'Yape (938 955 940)' : (clean.includes('plin') ? 'Plin' : 'Efectivo contra entrega');
+    const orderId = await processOrderAndDispatch({
+      from: from,
+      customerPhone: cleanPhone,
+      messageText: text,
+      address: text,
+      paymentMethod: payment
+    });
+
+    return `✅ *¡PERFECTO! Registramos tu pedido #${orderId}* 🍓🥥\n\nTu orden ya entró a preparación y nuestro motorizado ya fue notificado con tu dirección. 🛵💨\n\n💳 Puedes transferir por *Yape o Plin al 938 955 940* (Coco Ricco). ¡En unos 20-30 min lo tienes en tu puerta!`;
+  }
+
+  // Conversación fluida con IA de Groq
   if (!conversationHistory[cleanPhone]) conversationHistory[cleanPhone] = [];
   
   const aiReply = await callGroqAi(text, conversationHistory[cleanPhone]);
@@ -206,7 +338,7 @@ async function getConversationalReply(from, text) {
     return aiReply;
   }
 
-  // Respaldo Breve y Persuasivo
+  // Respaldo
   return `¡Hola! 👋🍓 ¡Qué rico tenerte por aquí! Mira todas nuestras fotos y precios al instante en nuestra carta: 👉 ${VERCEL_CATALOG_URL}\n\n¿A qué dirección en Jaén te enviamos tu pedido hoy? 🛵🥥`;
 }
 
@@ -256,7 +388,7 @@ async function connectToWhatsApp() {
       connectionStatus = '✓ CONECTADO 24/7 A WHATSAPP';
       qrCodeDataUrl = null;
       connectedNumber = sock.user?.id ? sock.user.id.split(':')[0] : 'Activo';
-      console.log('✓ Bot de Coco Ricco (IA Ventas Persuasivas) conectado exitosamente!');
+      console.log('✓ Bot de Coco Ricco (IA & Delivery Dispatcher) conectado exitosamente!');
     }
   });
 
@@ -280,21 +412,86 @@ async function connectToWhatsApp() {
       if (!text && !hasImage) continue;
 
       console.log(`[WhatsApp Inbound de ${from}]: "${text}"`);
+      const cleanLower = text.toLowerCase().trim();
 
-      // Motorizado (916982923)
+      // -------------------------------------------------------------
+      // 0. CONTROL DE ESTADOS DEL MOTORIZADO (916982923)
+      // -------------------------------------------------------------
       if (from.includes('916982923') || from === REPARTIDOR_PHONE) {
-        if (text.toLowerCase().includes('entregado')) {
-          const matchId = text.match(/PED-\d+/i);
-          const orderCode = matchId ? matchId[0].toUpperCase() : 'Último Pedido';
-          
-          await sock.sendMessage(from, {
-            text: `✅ *¡RECIBIDO!* El pedido *#${orderCode}* ha sido marcado como *ENTREGADO* en el sistema de Coco Ricco. 🛵👏`
+        const matchId = text.match(/PED-\d+/i);
+        const targetOrderId = matchId ? matchId[0].toUpperCase() : null;
+
+        const existingOrders = JSON.parse(fs.readFileSync(ORDERS_FILE, 'utf8'));
+        let orderFound = null;
+
+        // A) ENTREGADO
+        if (cleanLower.includes('entregado')) {
+          existingOrders.forEach(o => {
+            if (targetOrderId && o.id === targetOrderId) {
+              o.status = 'Entregado';
+              orderFound = o;
+            } else if (!targetOrderId && o.status !== 'Entregado' && o.status !== 'Rechazado') {
+              o.status = 'Entregado';
+              orderFound = o;
+            }
           });
+
+          fs.writeFileSync(ORDERS_FILE, JSON.stringify(existingOrders, null, 2));
+          const orderCode = orderFound ? orderFound.id : (targetOrderId || 'Último Pedido');
+
+          await sock.sendMessage(from, {
+            text: `✅ *¡CONFIRMADO!* Pedido *#${orderCode}* marcado como *ENTREGADO* en el sistema de Coco Ricco. 🛵👏`
+          });
+
+          // Notificar al cliente
+          if (orderFound && orderFound.customerJid) {
+            try {
+              await sock.sendMessage(orderFound.customerJid, {
+                text: `🍓🥥 *¡GRACIAS POR TU PREFERENCIA!* Tu pedido *#${orderCode}* de Coco Ricco ha sido entregado exitosamente. ¡Esperamos que disfrutes mucho tus helados! ⭐`
+              });
+            } catch (err) {
+              console.error('Error notificando cliente:', err.message);
+            }
+          }
+          return;
+        }
+
+        // B) RECHAZADO / CANCELADO
+        if (cleanLower.includes('rechazado') || cleanLower.includes('cancelado') || cleanLower.includes('no recibido')) {
+          existingOrders.forEach(o => {
+            if (targetOrderId && o.id === targetOrderId) {
+              o.status = 'Rechazado';
+              orderFound = o;
+            } else if (!targetOrderId && o.status !== 'Entregado' && o.status !== 'Rechazado') {
+              o.status = 'Rechazado';
+              orderFound = o;
+            }
+          });
+
+          fs.writeFileSync(ORDERS_FILE, JSON.stringify(existingOrders, null, 2));
+          const orderCode = orderFound ? orderFound.id : (targetOrderId || 'Último Pedido');
+
+          await sock.sendMessage(from, {
+            text: `⚠️ *PEDIDO #${orderCode} MARCADO COMO RECHAZADO / NO ENTREGADO*. Registrado en el sistema.`
+          });
+
+          // Notificar al cliente
+          if (orderFound && orderFound.customerJid) {
+            try {
+              await sock.sendMessage(orderFound.customerJid, {
+                text: `Hola, tu pedido *#${orderCode}* fue marcado como cancelado. Si hubo algún inconveniente con la entrega, por favor comunícate por aquí para ayudarte de inmediato. 😊`
+              });
+            } catch (err) {
+              console.error('Error notificando cliente:', err.message);
+            }
+          }
           return;
         }
       }
 
-      // Procesa con IA Persuasiva Breve
+      // -------------------------------------------------------------
+      // 1. ATENCIÓN CONVERSACIONAL DE CLIENTES (IA & VENTAS)
+      // -------------------------------------------------------------
       const aiReply = await getConversationalReply(from, text);
       if (aiReply) {
         await sock.sendMessage(from, { text: aiReply });
@@ -314,8 +511,19 @@ app.get('/api/status', (req, res) => {
     qrCode: qrCodeDataUrl,
     connectedNumber: connectedNumber,
     isReady: connectionStatus.includes('CONECTADO'),
-    aiEngine: 'Groq Persuasive Sales AI'
+    aiEngine: 'Groq Compound (Meta AI)',
+    repartidor: REPARTIDOR_PHONE,
+    googleSheetSync: {
+      spreadsheetId: SPREADSHEET_ID,
+      productsCount: cachedProducts.length,
+      lastSync: lastSyncTime
+    }
   });
+});
+
+app.get('/api/pedidos', (req, res) => {
+  const orders = JSON.parse(fs.readFileSync(ORDERS_FILE, 'utf8'));
+  res.json(orders);
 });
 
 app.get('/health', (req, res) => {
@@ -324,7 +532,8 @@ app.get('/health', (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`====================================================`);
-  console.log(`🍓 COCO RICCO BOT 24/7 — IA DE VENTAS PERSUASIVAS ACTIVA`);
+  console.log(`🍓 COCO RICCO BOT 24/7 — IA & DELIVERY DISPATCHER ACTIVO`);
+  console.log(`🛵 Motorizado Asignado: ${REPARTIDOR_PHONE}`);
   console.log(`PUERTO: ${PORT}`);
   console.log(`====================================================`);
 });
