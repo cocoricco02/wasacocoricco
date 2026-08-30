@@ -20,7 +20,7 @@ const server = http.createServer(app);
 const PORT = process.env.PORT || 3005;
 
 // CONFIG
-const SPREADSHEET_ID = (process.env.SPREADSHEET_ID || '1ssGOSUFp0TK478tcPej1sWyg_dySw6oW').trim();
+const SPREADSHEET_ID = (process.env.SPREADSHEET_ID || '1Rx_xNNW_CFPeujslN--1PdGT6PfnhTpQKrRYyoIu3rU').trim();
 const GOOGLE_SCRIPT_WEBHOOK_URL = (process.env.GOOGLE_SCRIPT_WEBHOOK_URL || '').trim();
 const REPARTIDOR_PHONE = '51916982923@s.whatsapp.net';
 const DUENO_PHONE = '51965691363@s.whatsapp.net'; // Notificaciones y Reportes al Dueño
@@ -216,10 +216,10 @@ async function processOrderAndDispatch({ from, customerPhone, messageText, addre
 
   console.log(`[NUEVO PEDIDO CONFIRMADO]: #${orderId} de +${customerPhone}`);
 
-  // Sincronizar con Google Sheets
+  // Sincronizar con Google Sheets Webhook (con seguimiento automático de redirecciones 302)
   if (GOOGLE_SCRIPT_WEBHOOK_URL && GOOGLE_SCRIPT_WEBHOOK_URL.startsWith('http')) {
     try {
-      const payload = JSON.stringify({
+      const payload = {
         action: 'nuevo_pedido',
         id_pedido: orderId,
         fecha_hora: new Date().toLocaleString(),
@@ -230,16 +230,18 @@ async function processOrderAndDispatch({ from, customerPhone, messageText, addre
         direccion: address || 'Jaén',
         metodo_pago: paymentMethod || 'Yape',
         tipo_entrega: 'Delivery'
-      });
+      };
 
-      const urlObj = new URL(GOOGLE_SCRIPT_WEBHOOK_URL);
-      const req = https.request(urlObj, {
+      fetch(GOOGLE_SCRIPT_WEBHOOK_URL, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) }
-      });
-      req.write(payload);
-      req.end();
-      console.log(`[Google Sheets Webhook]: Pedido #${orderId} registrado con éxito`);
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        redirect: 'follow'
+      })
+      .then(r => r.text())
+      .then(resText => console.log(`[Google Sheets Webhook Response]: Pedido #${orderId} escrito en Google Drive:`, resText))
+      .catch(err => console.error('[Google Script Fetch Error]:', err.message));
+
     } catch (err) {
       console.error('[Google Script Error]:', err.message);
     }
