@@ -18,7 +18,7 @@ const app = express();
 const server = http.createServer(app);
 const PORT = process.env.PORT || 3005;
 
-// CONFIG OFICIAL Y AUTORIZADA
+// CONFIG OFICIAL
 const SPREADSHEET_ID = '1Rx_xNNW_CFPeujslN--1PdGT6PfnhTpQKrRYyoIu3rU';
 const GOOGLE_SCRIPT_WEBHOOK_URL = 'https://script.google.com/macros/s/AKfycbyQWuorgJvXUKmex4EWFX50elYPs7fxdLNNgS1yih350DV5-7vymIEXum0r2jRlSWI/exec';
 const REPARTIDOR_PHONE = '51916982923@s.whatsapp.net';
@@ -87,7 +87,7 @@ async function syncProductsFromGoogleSheets() {
     if (rows && rows.length > 0) {
       cachedProducts = rows;
       lastSyncTime = new Date().toLocaleTimeString();
-      console.log(`[Google Sheets] ✓ ${rows.length} productos sincronizados en vivo (${lastSyncTime})`);
+      console.log(`[Google Sheets] ✓ ${rows.length} productos sincronizados (${lastSyncTime})`);
     }
   } catch (err) {
     console.error('[Google Sheets Error]:', err.message);
@@ -162,8 +162,7 @@ function analyzeStockForOrder(text) {
     }
   }
 
-  // Fallback si no especificó medida exacta pero pidió fresas
-  if (orderedItems.length === 0 && (clean.includes('fresa') || clean.includes('pedido') || clean.includes('vaso'))) {
+  if (orderedItems.length === 0) {
     orderedItems.push({
       id: 'FRES-08',
       nombre: 'Fresas con Crema Artesanales',
@@ -215,7 +214,7 @@ async function processOrderAndDispatch({ from, customerPhone, messageText, addre
     customerJid: from,
     orderDetail: messageText,
     items: orderedItems,
-    address: address || 'Dirección en Jaén indicada por cliente',
+    address: address || 'Dirección indicada por cliente',
     payment: paymentMethod || 'Yape / Efectivo',
     status: 'En Preparación'
   };
@@ -248,14 +247,14 @@ async function processOrderAndDispatch({ from, customerPhone, messageText, addre
       redirect: 'follow'
     })
     .then(r => r.text())
-    .then(resText => console.log(`[Google Sheets Webhook OK]: Pedido #${orderId} registrado y stock descontado en la hoja:`, resText))
-    .catch(err => console.error('[Google Script Error]:', err.message));
+    .then(resText => console.log(`[Google Sheets Webhook OK]: Pedido #${orderId} escrito en Google Drive:`, resText))
+    .catch(err => console.error('[Google Script Fetch Error]:', err.message));
 
   } catch (err) {
     console.error('[Google Script Error]:', err.message);
   }
 
-  // ALERTA DIRECTA AL MOTORIZADO (916982923)
+  // ALERTA AL MOTORIZADO (916982923)
   if (sock) {
     try {
       const alertTicket =
@@ -364,8 +363,37 @@ setInterval(async () => {
 }, 30000);
 
 // -------------------------------------------------------------
-// 4. MOTOR IA GENERATIVA (GROQ COMPOUND)
+// 4. MOTOR IA CON TOOL CALLING DIRECTO (GPT-OSS-120B / GROQ)
 // -------------------------------------------------------------
+const toolsDefinition = [
+  {
+    type: 'function',
+    function: {
+      name: 'confirmar_y_despachar_pedido',
+      description: 'Registra formalmente el pedido en Google Sheets (PEDIDOS), descuenta el stock en PRODUCTOS_STOCK y envía la alerta al WhatsApp del motorizado (916982923). DEBES llamar a esta función cuando el cliente confirme qué productos desea llevar y proporcione su dirección en Jaén o confirme la compra.',
+      parameters: {
+        type: 'object',
+        properties: {
+          productos_detalle: {
+            type: 'string',
+            description: 'Detalle de los productos pedidos (ej. 2 vasos de 8oz con Oreo y Fudge)'
+          },
+          direccion_entrega: {
+            type: 'string',
+            description: 'Dirección o referencia de entrega en Jaén'
+          },
+          metodo_pago: {
+            type: 'string',
+            enum: ['Yape', 'Plin', 'Efectivo contra entrega'],
+            description: 'Método de pago'
+          }
+        },
+        required: ['productos_detalle', 'direccion_entrega']
+      }
+    }
+  }
+];
+
 function buildSystemPrompt() {
   const stockSummary = cachedProducts
     .filter(p => !(p.Nombre_Producto || '').toLowerCase().includes('copa'))
@@ -379,36 +407,35 @@ function buildSystemPrompt() {
 
 DIRECTIVAS CRÍTICAS DE COMUNICACIÓN (VENTAS RÁPIDAS Y ESTÉTICA):
 1. RESPUESTAS BREVES Y ESTÉTICAS: Responde en MÁXIMO 2 a 3 líneas decoradas con emojis hermosos (🍓, 🥥, 🍦, 🛵, ✨, 💖, ⭐).
-2. TOPPINGS DE FRESAS CON CREMA: Las fresas incluyen toppings deliciosos (Oreo, Brownie, M&M, Fudge casero, Chantilly extra, Gomitas). Si eligen un vaso de fresas, pregúntales con qué toppings se les antoja armarlo.
-3. REVISA EL STOCK ANTES DE OFRECER: Si un producto dice "AGOTADO ❌", no lo ofrezcas; recomienda el vaso de 8oz (⭐ más pedido) o tazón de coco.
-4. ALTAMENTE PERSUASIVO: Tu objetivo es cerrar la venta lo antes posible con energía alegre y antojable.
-5. RECOMIENDA EL CATÁLOGO DESDE EL INICIO: En saludos o consultas iniciales, envía de inmediato el enlace con fotos: 👉 ${VERCEL_CATALOG_URL}
-6. PRECIOS:
+2. TOMA DE PEDIDOS CON TOOL CALLING: Cuando el cliente te dé su dirección o confirme su pedido con productos y ubicación en Jaén, DEBES llamar a la función 'confirmar_y_despachar_pedido' para registrarlo en Google Sheets y enviar la alerta al motorizado.
+3. TOPPINGS: Las fresas incluyen toppings (Oreo, Brownie, M&M, Fudge casero, Chantilly extra, Gomitas).
+4. RECOMIENDA EL CATÁLOGO DESDE EL INICIO: En saludos iniciales, envía el enlace con fotos: 👉 ${VERCEL_CATALOG_URL}
+5. PRECIOS:
    - Vasitos de Fresas con Crema: 5oz (S/5), 8oz (S/8 ⭐), 10oz (S/10), 12oz Mega (S/12).
    - Helado en Tazón de Coco Natural: S/. 12.00 (en cáscara real de coco 🥥).
    - Paletas Artesanales: S/. 6.00 (Coco, Lúcuma, Arándano, Oreo, Mango — Con Leche Nestlé adentro o Pura Fruta sin lácteos).
    *(NOTA: NO vendemos helado en copa de 2 bolas, solo tazón de coco y paletas).*
-7. CIERRE DIRECTO: Invita a pedir con: "¿A qué dirección en Jaén te lo enviamos hoy? 🛵💨".
-8. PAGOS: Yape/Plin al 938 955 940 (Coco Ricco) o Efectivo contra entrega. Delivery rápido en Jaén (20 a 30 min).
+6. PAGOS: Yape/Plin al 938 955 940 (Coco Ricco) o Efectivo contra entrega. Delivery en Jaén (20 a 30 min).
 
 STOCK ACTUAL EN GOOGLE SHEETS:
 ${stockSummary || 'Stock disponible en fresas, tazones de coco y paletas'}`;
 }
 
-async function callGroqAi(prompt, userHistory) {
+async function callGroqAiWithTools(from, text, userHistory) {
   if (!GROQ_API_KEY) return null;
 
   const messages = [
     { role: 'system', content: buildSystemPrompt() },
     ...userHistory,
-    { role: 'user', content: prompt }
+    { role: 'user', content: text }
   ];
 
   const payload = JSON.stringify({
-    model: 'groq/compound-mini',
+    model: 'openai/gpt-oss-120b',
     messages: messages,
+    tools: toolsDefinition,
     temperature: 0.65,
-    max_tokens: 180
+    max_tokens: 220
   });
 
   return new Promise((resolve) => {
@@ -423,24 +450,61 @@ async function callGroqAi(prompt, userHistory) {
           'Authorization': `Bearer ${GROQ_API_KEY}`,
           'Content-Length': Buffer.byteLength(payload)
         },
-        timeout: 10000
+        timeout: 12000
       },
-      (res) => {
+      async (res) => {
         let body = '';
         res.on('data', c => body += c);
-        res.on('end', () => {
+        res.on('end', async () => {
           try {
             const parsed = JSON.parse(body);
-            const text = parsed.choices?.[0]?.message?.content;
-            resolve(text || null);
+            const choice = parsed.choices?.[0];
+            const message = choice?.message;
+
+            // SI LA IA DECIDIÓ EJECUTAR LA HERRAMIENTA DE DESPACHO
+            if (message?.tool_calls && message.tool_calls.length > 0) {
+              const toolCall = message.tool_calls[0];
+              if (toolCall.function?.name === 'confirmar_y_despachar_pedido') {
+                const args = JSON.parse(toolCall.function.arguments || '{}');
+                console.log('[IA Tool Call]: Ejecutando confirmar_y_despachar_pedido con argumentos:', args);
+
+                const cleanPhone = from.replace(/[^0-9]/g, '');
+                const stockAnalysis = analyzeStockForOrder(args.productos_detalle || text);
+
+                if (!stockAnalysis.hasStock && stockAnalysis.outOfStockItem) {
+                  const item = stockAnalysis.outOfStockItem;
+                  resolve(`¡Uy! 🙈 Justo en este momento ${item.product} (${item.size}) se encuentra *AGOTADO* o solo nos queda ${item.availableStock} unidad(es). 🍓✨\n\nTe recomiendo llevar nuestro delicioso vaso de *8oz (⭐ el más pedido)* o un *Tazón de Coco*. ¿Te preparamos ese para tu dirección? 😊🛵💨`);
+                  return;
+                }
+
+                const orderId = await processOrderAndDispatch({
+                  from: from,
+                  customerPhone: cleanPhone,
+                  messageText: `${args.productos_detalle || text} | Pago: ${args.metodo_pago || 'Yape/Efectivo'}`,
+                  address: args.direccion_entrega || text,
+                  paymentMethod: args.metodo_pago || 'Yape / Efectivo',
+                  orderedItems: stockAnalysis.items
+                });
+
+                resolve(`✅ *¡PERFECTO! Pedido #${orderId} registrado y validado* 🍓🥥✨\n\nTu orden (${args.productos_detalle || 'de fresas con crema'}) ya entró a preparación y nuestro motorizado ya fue notificado con tu dirección: *${args.direccion_entrega || 'en Jaén'}*. 🛵💨\n\n💳 Puedes transferir por *Yape o Plin al 938 955 940* (Coco Ricco). ¡En unos 20-30 min lo tienes en tu puerta! 💖`);
+                return;
+              }
+            }
+
+            const textResponse = message?.content;
+            resolve(textResponse || null);
           } catch (e) {
+            console.error('[Groq Tool Call Parse Error]:', e);
             resolve(null);
           }
         });
       }
     );
 
-    req.on('error', () => resolve(null));
+    req.on('error', (err) => {
+      console.error('[Groq Error]:', err.message);
+      resolve(null);
+    });
     req.on('timeout', () => { req.destroy(); resolve(null); });
     req.write(payload);
     req.end();
@@ -448,76 +512,14 @@ async function callGroqAi(prompt, userHistory) {
 }
 
 // -------------------------------------------------------------
-// RESPUESTA CONVERSACIONAL Y DETECCIÓN INTELIGENTE DE PEDIDOS
+// RESPUESTA CONVERSACIONAL
 // -------------------------------------------------------------
 async function getConversationalReply(from, text) {
   const cleanPhone = from.replace(/[^0-9]/g, '');
-  const clean = text.toLowerCase().trim();
 
-  // Detección natural de pedidos
-  const hasDeliveryKeyword =
-    clean.includes('delivery') ||
-    clean.includes('envia') ||
-    clean.includes('envíame') ||
-    clean.includes('traeme') ||
-    clean.includes('tráeme') ||
-    clean.includes('lleva') ||
-    clean.includes('manda') ||
-    clean.includes('pido') ||
-    clean.includes('quiero pedir') ||
-    clean.includes('quiero hacer un pedido') ||
-    clean.includes('san martin') ||
-    clean.includes('san martín') ||
-    clean.includes('calle') ||
-    clean.includes('jr') ||
-    clean.includes('av') ||
-    clean.includes('pasaje') ||
-    clean.includes('sector') ||
-    clean.includes('barrio') ||
-    clean.includes('casa') ||
-    clean.includes('direccion') ||
-    clean.includes('dirección');
-
-  const hasProductKeyword =
-    clean.includes('vaso') ||
-    clean.includes('vasos') ||
-    clean.includes('5oz') ||
-    clean.includes('8oz') ||
-    clean.includes('10oz') ||
-    clean.includes('12oz') ||
-    clean.includes('fresa') ||
-    clean.includes('fresas') ||
-    clean.includes('tazon') ||
-    clean.includes('tazón') ||
-    clean.includes('paleta') ||
-    clean.includes('paletas');
-
-  // Si el cliente pide productos con intención de compra o dirección
-  if (hasProductKeyword && (hasDeliveryKeyword || clean.includes('quiero') || clean.includes('yape') || clean.includes('efectivo'))) {
-    const stockAnalysis = analyzeStockForOrder(text);
-
-    if (!stockAnalysis.hasStock && stockAnalysis.outOfStockItem) {
-      const item = stockAnalysis.outOfStockItem;
-      return `¡Uy! 🙈 Justo en este momento ${item.product} (${item.size}) se encuentra *AGOTADO* o solo nos queda ${item.availableStock} unidad(es). 🍓✨\n\nTe recomiendo llevar nuestro delicioso vaso de *8oz (⭐ el más pedido)* o un *Tazón de Coco*. ¿Te preparamos ese para tu dirección? 😊🛵💨`;
-    }
-
-    const payment = clean.includes('yape') ? 'Yape (938 955 940)' : (clean.includes('plin') ? 'Plin' : 'Efectivo contra entrega');
-    const orderId = await processOrderAndDispatch({
-      from: from,
-      customerPhone: cleanPhone,
-      messageText: text,
-      address: text,
-      paymentMethod: payment,
-      orderedItems: stockAnalysis.items
-    });
-
-    return `✅ *¡PERFECTO! Pedido #${orderId} registrado y validado* 🍓🥥✨\n\nTu orden ya entró a preparación con los toppings de la casa y nuestro motorizado ya fue notificado con tu dirección. 🛵💨\n\n💳 Puedes transferir por *Yape o Plin al 938 955 940* (Coco Ricco). ¡En unos 20-30 min lo tienes en tu puerta! 💖`;
-  }
-
-  // Conversación IA
   if (!conversationHistory[cleanPhone]) conversationHistory[cleanPhone] = [];
   
-  const aiReply = await callGroqAi(text, conversationHistory[cleanPhone]);
+  const aiReply = await callGroqAiWithTools(from, text, conversationHistory[cleanPhone]);
   if (aiReply) {
     conversationHistory[cleanPhone].push({ role: 'user', content: text });
     conversationHistory[cleanPhone].push({ role: 'assistant', content: aiReply });
@@ -577,7 +579,7 @@ async function connectToWhatsApp() {
       connectionStatus = '✓ CONECTADO 24/7 A WHATSAPP';
       qrCodeDataUrl = null;
       connectedNumber = sock.user?.id ? sock.user.id.split(':')[0] : 'Activo';
-      console.log('✓ Bot de Coco Ricco (IA, Google Sheets Webhook & Delivery) conectado exitosamente!');
+      console.log('✓ Bot de Coco Ricco (IA Tool Calling, Google Sheets & Delivery) conectado exitosamente!');
     }
   });
 
@@ -705,7 +707,7 @@ async function connectToWhatsApp() {
         return;
       }
 
-      // 3. ATENCIÓN CONVERSACIONAL DE CLIENTES (IA & VENTAS)
+      // 3. ATENCIÓN CONVERSACIONAL CON TOOL CALLING
       const aiReply = await getConversationalReply(from, text);
       if (aiReply) {
         await sock.sendMessage(from, { text: aiReply });
@@ -725,7 +727,7 @@ app.get('/api/status', (req, res) => {
     qrCode: qrCodeDataUrl,
     connectedNumber: connectedNumber,
     isReady: connectionStatus.includes('CONECTADO'),
-    aiEngine: 'Groq Compound (Meta AI & Yape OCR)',
+    aiEngine: 'Groq GPT-OSS-120B with Real-Time Tool Calling',
     googleAppsScriptWebhook: 'CONECTADO Y AUTORIZADO (200 OK)',
     duenoNotificaciones: DUENO_PHONE,
     repartidor: REPARTIDOR_PHONE,
@@ -748,7 +750,7 @@ app.get('/health', (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`====================================================`);
-  console.log(`🍓 COCO RICCO BOT 24/7 — GOOGLE APPS SCRIPT WEBHOOK OK`);
+  console.log(`🍓 COCO RICCO BOT 24/7 — AI TOOL CALLING DESPACHO ACTIVO`);
   console.log(`📊 Google Sheet ID: ${SPREADSHEET_ID}`);
   console.log(`🛵 Motorizado Asignado: ${REPARTIDOR_PHONE}`);
   console.log(`PUERTO: ${PORT}`);
