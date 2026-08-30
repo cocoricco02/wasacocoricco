@@ -87,7 +87,7 @@ async function syncProductsFromGoogleSheets() {
     if (rows && rows.length > 0) {
       cachedProducts = rows;
       lastSyncTime = new Date().toLocaleTimeString();
-      console.log(`[Google Sheets] ✓ ${rows.length} productos sincronizados (${lastSyncTime})`);
+      console.log(`[Google Sheets] ✓ ${rows.length} productos sincronizados en vivo (${lastSyncTime})`);
     }
   } catch (err) {
     console.error('[Google Sheets Error]:', err.message);
@@ -180,14 +180,19 @@ function analyzeStockForOrder(text) {
 }
 
 // -------------------------------------------------------------
-// 2. REGISTRO DE PEDIDO, ESCRITURA EN GOOGLE SHEETS & ALERTA MOTORIZADO
+// 2. REGISTRO DE PEDIDO CON DETECCIÓN EXACTA DEL CLIENTE REAL
 // -------------------------------------------------------------
 async function processOrderAndDispatch({ from, customerPhone, messageText, address, paymentMethod, orderedItems }) {
   const orderId = `PED-${Date.now().toString().slice(-4)}`;
 
-  const phoneMatch = messageText.match(/9\d{8}/);
-  const contactPhone = phoneMatch ? phoneMatch[0] : customerPhone;
-  const cleanCallPhone = contactPhone.startsWith('51') ? contactPhone : (contactPhone.length === 9 ? `51${contactPhone}` : contactPhone);
+  // Extracción limpia del número que escribe
+  const rawCleanPhone = customerPhone.replace(/[^0-9]/g, '');
+  const clean9DigitCustomerPhone = rawCleanPhone.startsWith('51') && rawCleanPhone.length === 11 ? rawCleanPhone.slice(2) : rawCleanPhone;
+
+  // Filtrar si el cliente dio un número alternativo (excluyendo el del negocio 938955940 y motorizado 916982923)
+  const allPhonesInText = (messageText.match(/9\d{8}/g) || []).filter(p => p !== '938955940' && p !== '916982923');
+  const finalContactPhone = allPhonesInText.length > 0 ? allPhonesInText[0] : clean9DigitCustomerPhone;
+  const cleanCallPhone = finalContactPhone.length === 9 ? `51${finalContactPhone}` : finalContactPhone;
 
   // Descontar stock localmente en memoria
   if (orderedItems && orderedItems.length > 0) {
@@ -209,8 +214,8 @@ async function processOrderAndDispatch({ from, customerPhone, messageText, addre
     id: orderId,
     timestamp: new Date().toLocaleString(),
     dateStr: new Date().toISOString().split('T')[0],
-    customerPhone: customerPhone,
-    contactPhone: contactPhone,
+    customerPhone: clean9DigitCustomerPhone,
+    contactPhone: finalContactPhone,
     customerJid: from,
     orderDetail: messageText,
     items: orderedItems,
@@ -223,16 +228,16 @@ async function processOrderAndDispatch({ from, customerPhone, messageText, addre
   existingOrders.push(newOrder);
   fs.writeFileSync(ORDERS_FILE, JSON.stringify(existingOrders, null, 2));
 
-  console.log(`[NUEVO PEDIDO CONFIRMADO]: #${orderId} de +${customerPhone}`);
+  console.log(`[NUEVO PEDIDO CONFIRMADO]: #${orderId} de cliente real: +51 ${finalContactPhone}`);
 
-  // ESCRITURA REAL EN GOOGLE SHEETS WEBHOOK (APPS SCRIPT)
+  // ESCRITURA EN GOOGLE SHEETS
   try {
     const payload = {
       action: 'nuevo_pedido',
       id_pedido: orderId,
       fecha_hora: new Date().toLocaleString(),
-      cliente_nombre: `Cliente WhatsApp +${customerPhone}`,
-      telefono: contactPhone,
+      cliente_nombre: `Cliente WhatsApp +51 ${finalContactPhone}`,
+      telefono: finalContactPhone,
       detalle_pedido: messageText,
       items: orderedItems,
       direccion: address || 'Jaén',
@@ -254,15 +259,15 @@ async function processOrderAndDispatch({ from, customerPhone, messageText, addre
     console.error('[Google Script Error]:', err.message);
   }
 
-  // ALERTA AL MOTORIZADO (916982923)
+  // ALERTA AL MOTORIZADO (916982923) CON EL NÚMERO EXACTO DEL CLIENTE
   if (sock) {
     try {
       const alertTicket =
 `🛵 *¡NUEVO PEDIDO PARA DELIVERY — COCO RICCO!* 🍓✨
 
 📋 *ID Orden:* #${orderId}
-👤 *Cliente:* +${customerPhone}
-📞 *Teléfono para Llamar:* +${contactPhone}
+👤 *Cliente que escribe:* +51 ${clean9DigitCustomerPhone}
+📞 *Teléfono para Llamar:* +51 ${finalContactPhone}
 💬 *Chat Directo WhatsApp:* https://wa.me/${cleanCallPhone}
 🍧 *Detalle:* ${messageText}
 📍 *Dirección de Entrega:* ${address || 'Jaén'}
@@ -274,7 +279,7 @@ async function processOrderAndDispatch({ from, customerPhone, messageText, addre
 • *RECHAZADO ${orderId}* (si fue cancelado o no recibido)`;
 
       await sock.sendMessage(REPARTIDOR_PHONE, { text: alertTicket });
-      console.log(`[Motorizado Notificado]: Alerta enviada para orden #${orderId}`);
+      console.log(`[Motorizado Notificado]: Alerta enviada para orden #${orderId} con teléfono real +51 ${finalContactPhone}`);
     } catch (err) {
       console.error('[Error Enviando al Motorizado]:', err.message);
     }
@@ -363,7 +368,7 @@ setInterval(async () => {
 }, 30000);
 
 // -------------------------------------------------------------
-// 4. MOTOR IA CON TOOL CALLING DIRECTO (GPT-OSS-120B / GROQ)
+// 4. MOTOR IA CON TOOL CALLING (GPT-OSS-120B / GROQ)
 // -------------------------------------------------------------
 const toolsDefinition = [
   {
