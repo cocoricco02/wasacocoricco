@@ -24,7 +24,7 @@ const GOOGLE_SCRIPT_WEBHOOK_URL = 'https://script.google.com/macros/s/AKfycbyQWu
 const REPARTIDOR_PHONE = '51916982923@s.whatsapp.net';
 const DUENO_PHONE = '51965691363@s.whatsapp.net';
 const VERCEL_CATALOG_URL = 'https://carta-cocoricco.vercel.app';
-const GROQ_API_KEY = (process.env.GROQ_API_KEY || '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').trim();
+const GROQ_API_KEY = (process.env.GROQ_API_KEY || '').trim();
 
 let cachedProducts = [];
 let lastSyncTime = null;
@@ -413,12 +413,25 @@ function buildSystemPrompt() {
 DIRECTIVAS CRÍTICAS DE COMUNICACIÓN (VENTAS RÁPIDAS Y ESTÉTICA):
 1. RESPUESTAS BREVES Y ESTÉTICAS: Responde en MÁXIMO 2 a 3 líneas decoradas con emojis hermosos (🍓, 🥥, 🍦, 🛵, ✨, 💖, ⭐).
 2. TOMA DE PEDIDOS CON TOOL CALLING: Cuando el cliente te dé su dirección o confirme su pedido con productos y ubicación en Jaén, DEBES llamar a la función 'confirmar_y_despachar_pedido' para registrarlo en Google Sheets y enviar la alerta al motorizado.
-3. TOPPINGS: Las fresas incluyen toppings (Oreo, Brownie, M&M, Fudge casero, Chantilly extra, Gomitas).
+3. REGLAS EXACTAS DE TOPPINGS Y JARABES POR VASO:
+   - Vaso 8 oz (S/ 8.00 ⭐): Incluye 2 TOPPINGS y 2 JARABES a elección.
+   - Vaso 10 oz (S/ 10.00): Incluye 4 TOPPINGS y 3 JARABES a elección.
+   - Vaso 12 oz Mega (S/ 12.00): Incluye 4 TOPPINGS y 3 JARABES a elección.
+   - Vaso 5 oz (S/ 5.00): Vaso personal con salsas y chispas.
+
+   LISTA OFICIAL DE TOPPINGS:
+   • Chinchin, Chocobombas, Gomitas en Aro, Gomitas Osito, Gomitas Gusanito, Gomitas en Cono, Grajeas, Chispas de chocolate negro, Chispas de chocolate blanco, Coco rayado, Maní tostado, Mini bombom, Gomitas de perita, Gomitas ácidas, Galleta de Oreo, Galleta Doña Pepa, Casino menta.
+
+   LISTA OFICIAL DE JARABES:
+   • Fudge casero artesanal, Leche condensada cremosa, Chantilly de la casa, Jalea de fresa.
+
+   Cuando un cliente pida fresas, recuérdale con entusiasmo elegir sus toppings y jarabes según el tamaño de su vaso.
 4. RECOMIENDA EL CATÁLOGO DESDE EL INICIO: En saludos iniciales, envía el enlace con fotos: 👉 ${VERCEL_CATALOG_URL}
 5. PRECIOS:
    - Vasitos de Fresas con Crema: 5oz (S/5), 8oz (S/8 ⭐), 10oz (S/10), 12oz Mega (S/12).
    - Helado en Tazón de Coco Natural: S/. 12.00 (en cáscara real de coco 🥥).
-   - Paletas Artesanales: S/. 6.00 (Coco, Lúcuma, Arándano, Oreo, Mango — Con Leche Nestlé adentro o Pura Fruta sin lácteos).
+   - Helado en Coco + Maracuyá: S/. 12.00.
+   - Paletas Artesanales: S/. 6.00 (Coco, Lúcuma, Arándano, Oreo, Fudge de Chocolate, Mango — Con Leche Nestlé adentro o Pura Fruta sin lácteos).
    *(NOTA: NO vendemos helado en copa de 2 bolas, solo tazón de coco y paletas).*
 6. PAGOS: Yape/Plin al 938 955 940 (Coco Ricco) o Efectivo contra entrega. Delivery en Jaén (20 a 30 min).
 
