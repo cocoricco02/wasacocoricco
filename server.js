@@ -21,9 +21,10 @@ const PORT = process.env.PORT || 3005;
 // CONFIG OFICIAL
 const SPREADSHEET_ID = '1Rx_xNNW_CFPeujslN--1PdGT6PfnhTpQKrRYyoIu3rU';
 const GOOGLE_SCRIPT_WEBHOOK_URL = 'https://script.google.com/macros/s/AKfycbyQWuorgJvXUKmex4EWFX50elYPs7fxdLNNgS1yih350DV5-7vymIEXum0r2jRlSWI/exec';
-const REPARTIDOR_PHONE = '51916982923@s.whatsapp.net';
-const DUENO_PHONE = '51965691363@s.whatsapp.net';
-const VERCEL_CATALOG_URL = 'https://carta-cocoricco.vercel.app';
+const REPARTIDOR_PHONE = (process.env.REPARTIDOR_PHONE || '51916982923').replace(/[^0-9]/g, '') + '@s.whatsapp.net';
+const DUENO_PHONE = (process.env.DUENO_PHONE || '51965691363').replace(/[^0-9]/g, '') + '@s.whatsapp.net';
+const VERCEL_CATALOG_URL = 'https://carta-cocoricco-b1wfhehpi-cocoricco.vercel.app';
+const VERCEL_DELIVERY_URL = 'https://carta-cocoricco-b1wfhehpi-cocoricco.vercel.app/?mode=delivery';
 const GROQ_API_KEY = (process.env.GROQ_API_KEY || '').trim();
 
 let cachedProducts = [];
@@ -426,7 +427,7 @@ DIRECTIVAS CRÍTICAS DE COMUNICACIÓN (VENTAS RÁPIDAS Y ESTÉTICA):
    • Fudge casero artesanal, Leche condensada cremosa, Chantilly de la casa, Jalea de fresa.
 
    Cuando un cliente pida fresas, recuérdale con entusiasmo elegir sus toppings y jarabes según el tamaño de su vaso.
-4. RECOMIENDA EL CATÁLOGO DESDE EL INICIO: En saludos iniciales, envía el enlace con fotos: 👉 ${VERCEL_CATALOG_URL}
+4. RECOMIENDA EL CATÁLOGO Y PEDIDOS ONLINE: En saludos iniciales o si quieren pedir directo con fotos, envía el enlace: 👉 ${VERCEL_DELIVERY_URL} (o ${VERCEL_CATALOG_URL})
 5. PRECIOS:
    - Vasitos de Fresas con Crema: 5oz (S/5), 8oz (S/8 ⭐), 10oz (S/10), 12oz Mega (S/12).
    - Helado en Tazón de Coco Natural: S/. 12.00 (en cáscara real de coco 🥥).
@@ -548,7 +549,7 @@ async function getConversationalReply(from, text) {
   }
 
   // Respaldo
-  return `¡Hola! 👋🍓 ¡Qué rico tenerte por aquí! Mira todas nuestras fotos y precios al instante en nuestra carta: 👉 ${VERCEL_CATALOG_URL}\n\n¿A qué dirección en Jaén te enviamos tu pedido hoy? 🛵🥥✨`;
+  return `¡Hola! 👋🍓 ¡Qué rico tenerte por aquí! Mira todas nuestras fotos, toppings y haz tu pedido al instante aquí: 👉 ${VERCEL_DELIVERY_URL}\n\n¿A qué dirección en Jaén te enviamos tu pedido hoy? 🛵🥥✨`;
 }
 
 // -------------------------------------------------------------
