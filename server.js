@@ -23,8 +23,8 @@ const SPREADSHEET_ID = '1Rx_xNNW_CFPeujslN--1PdGT6PfnhTpQKrRYyoIu3rU';
 const GOOGLE_SCRIPT_WEBHOOK_URL = 'https://script.google.com/macros/s/AKfycbyQWuorgJvXUKmex4EWFX50elYPs7fxdLNNgS1yih350DV5-7vymIEXum0r2jRlSWI/exec';
 const REPARTIDOR_PHONE = (process.env.REPARTIDOR_PHONE || '51916982923').replace(/[^0-9]/g, '') + '@s.whatsapp.net';
 const DUENO_PHONE = (process.env.DUENO_PHONE || '51965691363').replace(/[^0-9]/g, '') + '@s.whatsapp.net';
-const VERCEL_CATALOG_URL = 'https://carta-cocoricco-b1wfhehpi-cocoricco.vercel.app';
-const VERCEL_DELIVERY_URL = 'https://carta-cocoricco-b1wfhehpi-cocoricco.vercel.app/?mode=delivery';
+const VERCEL_CATALOG_URL = 'https://carta-cocoricco.vercel.app';
+const VERCEL_DELIVERY_URL = 'https://carta-cocoricco.vercel.app/?mode=delivery';
 const GROQ_API_KEY = (process.env.GROQ_API_KEY || '').trim();
 
 let cachedProducts = [];
